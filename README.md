@@ -1,4 +1,4 @@
-# 🍯 HANIMAT – Der Open-Source Honigautomat | Release Mitte/Ende Sommer 2025
+# 🍯 HANIMAT – Der Open-Source Honigautomat | Derzeit warte ich auf Rückmeldung von myPos 19.10.2025
 
 Willkommen beim HANIMAT! Dieses Projekt wurde ins Leben gerufen, um Imkern und Direktvermarktern eine **einfache, moderne und kostengünstige Möglichkeit** zu bieten, Produkte rund um die Uhr selbstständig zu verkaufen – ganz ohne teure Automatenlösungen.
 
