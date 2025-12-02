@@ -117,6 +117,7 @@ Stell Fragen, teile deine Ideen und zeig deine eigene HANIMAT-Version:
 ## 📜 Lizenz & Urheberrecht
 
 * **Urheber:** Thomas Schöpf – [www.schoepf-tirol.at](https://www.schoepf-tirol.at)
+* **PCB-Desing:** Roland Rust
 * **Projektseite:** [www.hanimat.at](https://www.hanimat.at)
 * **Lizenz:** [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/)
 
