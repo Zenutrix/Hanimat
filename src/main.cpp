@@ -450,7 +450,7 @@ void setup() {
   logMessage("System starting: HANIMAT " + FIRMWARE_VERSION);
   bootTime = millis();
 
-  // --- Initialize I2C ---
+// --- Initialize I2C ---
   Wire.begin();
   Wire.setClock(50000L); // Set I2C clock to 50kHz for stability
   logMessage("I2C clock set to 50kHz.");
@@ -460,29 +460,27 @@ void setup() {
   // This is done immediately after I2C initialization to ensure relay
   // pins are in a defined state (OFF) as quickly as possible.
   expanderOutputStates[0] = 0x0000;
-  logMessage("Configuring Relay Board Bank 0 (Slots 0-7) as outputs...");
+
+  // OPTIMIERUNG:
+  // 1. Zuerst die Output-Register auf LOW setzen (während die Pins noch Inputs sind).
+  //    Das verhindert das "Klackern" beim Starten.
+  // 2. Sequential Write nutzen (2 Bytes auf einmal) für weniger Overhead.
+  
+  logMessage("Setting relay output latches to OFF (pre-config)...");
   Wire.beginTransmission(RELAY_I2C_ADDRESS);
-  Wire.write(0x06); // IODIRB Register
-  Wire.write(0x00); // Set all pins of Port B to output
-  Wire.endTransmission();
-   
-  logMessage("Configuring Relay Board Bank 1 (Slots 8-15) as outputs...");
-  Wire.beginTransmission(RELAY_I2C_ADDRESS);
-  Wire.write(0x07); // IODIRA Register
-  Wire.write(0x00); // Set all pins of Port A to output
+  Wire.write(0x02); // Start bei Register 0x02 (Output Port 0)
+  Wire.write(0x00); // Port 0 auf LOW
+  Wire.write(0x00); // Port 1 auf LOW (Chip inkrementiert automatisch zu Reg 0x03)
   Wire.endTransmission();
 
-  logMessage("Setting all relays to OFF state...");
+  logMessage("Configuring Relay Board pins as OUTPUT...");
   Wire.beginTransmission(RELAY_I2C_ADDRESS);
-  Wire.write(0x02); // GPIOB Register
-  Wire.write(0x00); // Set all pins low
+  Wire.write(0x06); // Start bei Register 0x06 (Configuration Port 0)
+  Wire.write(0x00); // Port 0 auf OUTPUT
+  Wire.write(0x00); // Port 1 auf OUTPUT (Chip inkrementiert automatisch zu Reg 0x07)
   Wire.endTransmission();
-   
-  Wire.beginTransmission(RELAY_I2C_ADDRESS);
-  Wire.write(0x03); // GPIOA Register
-  Wire.write(0x00); // Set all pins low
-  Wire.endTransmission();
-  logMessage("Relay board initialized.");
+
+  logMessage("Relay board initialized (Fast Mode).");
 
   // --- Initialize Telegram Client ---
   secured_client.setInsecure(); // Allow connections without certificate validation
