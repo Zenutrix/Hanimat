@@ -7,20 +7,22 @@
  *
  * © Copyright Thomas Schöpf
  *
- * Der HANIMAT steht unter der Creative Commons Namensnennung-NichtKommerziell 4.0 International (CC BY-NC 4.0) Lizenz.
+ * Der HANIMAT steht unter der **Creative Commons Namensnennung-NichtKommerziell-Weitergabe unter gleichen Bedingungen 4.0 International (CC BY-NC-SA 4.0)** Lizenz.
  * Urheber des Projekts ist Thomas Schöpf (Hanimat-Projekt).
  * Weitere Informationen finden Sie unter: www.hanimat.at
  *
- * Was bedeutet die CC BY-NC 4.0 Lizenz für dich und den HANIMAT?
+ * Was bedeutet die CC BY-NC-SA 4.0 Lizenz für dich und den HANIMAT?
  * Du darfst die HANIMAT-Software und -Pläne frei nutzen, kopieren, weiterentwickeln und anpassen.
- * Bei jeder Weitergabe oder Veröffentlichung deiner HANIMAT Anpassungen musst du Thomas Schöpf (Hanimat-Projekt)
- * als Urheber nennen und einen Link zur Lizenz (CC BY-NC 4.0) beifügen.
+ * * **Bedingungen:**
+ * 1. **Namensnennung:** Bei jeder Weitergabe oder Veröffentlichung deiner HANIMAT Anpassungen musst du Thomas Schöpf (Hanimat-Projekt)
+ * als Urheber nennen und einen Link zur Lizenz (CC BY-NC-SA 4.0) beifügen.
+ * 2. **Weitergabe unter gleichen Bedingungen (Share Alike):** Die Bereitstellung der HANIMAT Software und Pläne selbst,
+ * sowie deiner Anpassungen daran (Remixe, Derivate), muss kostenfrei und unter denselben Lizenzbedingungen erfolgen.
+ * 3. **Nicht Kommerziell:** Du darfst die HANIMAT-Software, die Pläne oder deine direkten Anpassungen daran nicht verkaufen oder als kommerzielles Produkt anbieten.
  *
+ * **Ausdrückliche Erlaubnis:**
  * Der Verkauf von Produkten, die du mit einem selbstgebauten HANIMAT Automaten anbietest (z.B. Honig, Eier etc.),
  * ist ausdrücklich erlaubt und erwünscht! Das ist der Sinn des HANIMAT Projekts.
- *
- * Du darfst die HANIMAT-Software, die Pläne oder deine direkten Anpassungen daran nicht verkaufen oder als kommerzielles Produkt anbieten.
- * Die Bereitstellung der HANIMAT Software und Pläne selbst muss kostenfrei und unter denselben Lizenzbedingungen erfolgen.
  *
  * Diese Firmware verwaltet alle Operationen der HANIMAT Verkaufsmaschine, einschließlich:
  * - TFT Display Benutzeroberfläche
@@ -31,6 +33,7 @@
  * - OTA (Over-the-Air) Firmware-Updates
  * - Telegram Benachrichtigungen für Verkäufe und Lagerbestandsalarme
  */
+
 
 #include <Arduino.h>
 #include <Wire.h>
