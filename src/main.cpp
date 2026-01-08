@@ -497,7 +497,7 @@ void setup() {
   ledcWriteTone(0, 0); // Ensure buzzer is off
 
   // --- Initialize GPIO Pins ---
-  pinMode(WIFI_RESET_BUTTON, INPUT_PULLUP);
+  pinMode(WIFI_RESET_BUTTON, INPUT);
   pinMode(OFFLINE_MODE_PIN, INPUT_PULLUP);
   pinMode(BILL_INHIBIT_PIN, OUTPUT);
   digitalWrite(BILL_INHIBIT_PIN, HIGH); // Inhibit bill acceptor by default
@@ -691,30 +691,78 @@ void loop() {
   // Always handle web server clients
   server.handleClient();
 
-  // Check for factory reset button press (hold for 7 seconds)
+/*
+// --- Hochgradig entstörte Reset-Logik mit Keypad-Bestätigung ---
   if (digitalRead(WIFI_RESET_BUTTON) == LOW) {
-    unsigned long pressStart = millis();
-    while (digitalRead(WIFI_RESET_BUTTON) == LOW) {
-      if (millis() - pressStart >= 7000) break;
-      delay(10);
+    
+    // Sicherheitsprüfung: Muss 500ms STABIL gedrückt sein (Filtert Rauschen)
+    unsigned long stabilityTimer = millis();
+    bool isInterference = false;
+    
+    while (millis() - stabilityTimer < 2000) {
+      if (digitalRead(WIFI_RESET_BUTTON) == HIGH) { 
+        isInterference = true;
+        break;
+      }
+      delay(5); 
     }
-    if (millis() - pressStart >= 7000) {
-      logMessage("FACTORY RESET initiated...");
-      tft.fillScreen(ILI9341_BLACK);
-      tft.setTextColor(ILI9341_RED); tft.setTextSize(3);
-      tft.setCursor(10, 80); tft.println("WERKSRESET");
-      tft.setTextSize(2); tft.setCursor(10, 130); tft.println("Daten werden geloescht...");
-      delay(3000);
 
-      // Clear all saved settings
-      preferences.begin("hanimat", true); preferences.clear(); preferences.end();
-      WiFiManager wm; wm.resetSettings();
+    // Nur wenn das Signal 500ms perfekt stabil war, öffnen wir den Dialog
+    if (!isInterference) {
+      logMessage("Reset-Knopf stabil gedrueckt. Warte auf # am Keypad...");
       
-      logMessage("Factory reset complete. Restarting...");
-      ESP.restart();
+      // Anzeige auf dem TFT
+      tft.fillScreen(ILI9341_BLACK);
+      tft.setFont(&Poppins_Black14pt7b);
+      tft.setTextColor(ILI9341_ORANGE);
+      tft.setCursor(10, 60); tft.println("RESET?");
+      
+      tft.setFont(&Poppins_Regular10pt7b);
+      tft.setTextColor(ILI9341_WHITE);
+      tft.setCursor(10, 110); tft.println("Bestaetigen mit #");
+      tft.setCursor(10, 140); tft.println("Abbruch nach 5 Sek.");
+      
+      playKeyPressBeep();
+
+      unsigned long waitStart = millis();
+      bool confirmed = false;
+
+      // 5 Sekunden Zeitfenster für die Raute-Taste
+      while (millis() - waitStart < 5000) {
+        char key = manualGetKeyState(); 
+        if (key == '#') {
+          confirmed = true;
+          break;
+        }
+        delay(10);
+      }
+
+      if (confirmed) {
+        logMessage("RESET BESTAETIGT!");
+        tft.fillScreen(ILI9341_BLACK);
+        tft.setTextColor(ILI9341_RED);
+        tft.setFont(&Poppins_Black14pt7b);
+        tft.setCursor(10, 80); tft.println("WERKSRESET...");
+        playErrorSound();
+        delay(2000);
+
+        // Daten löschen
+        preferences.begin("hanimat", false);
+        preferences.clear();
+        preferences.end();
+        
+        WiFiManager wm;
+        wm.resetSettings();
+        
+        logMessage("Factory reset complete. Restarting...");
+        ESP.restart();
+      } else {
+        logMessage("Reset abgebrochen.");
+        resetDisplayToDefault(); 
+      }
     }
   }
-
+*/
   // --- Main state machine ---
   if (currentSystemState != CurrentSystemState::OTA_UPDATE) {
     // Timeout for user inactivity, resetting the screen to default
