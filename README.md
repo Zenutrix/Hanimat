@@ -71,17 +71,9 @@ In diesem Repository findest du alles, was du für die **Stand-Alone Bargeld-Ver
 | Keypad Zeilen | GPIO 15, 14, 12, 17 | KEYPAD_ROWS |
 | Keypad Spalten | GPIO 2, 19, 13 | KEYPAD_COLS |
 
-## 🐛 Bekannte Probleme & Bugfixes (BETA)
+## 🐛 Bekannte Probleme & Bugfixes
 
-### ⚠️ Bootloop-Gefahr bei GPIO 34 (WLAN-Reset)
-Bei der Nutzung der Firmware **ohne das offizielle HANIMAT-PCB** gibt es eine wichtige technische Besonderheit:
-
-* **Ursache:** Der Pin `GPIO 34` (WIFI_RESET_BUTTON) wird für den Werksreset genutzt. Da dieser Pin am ESP32 keinen internen Pull-Down-Widerstand besitzt, "floatet" er ohne externe Beschaltung.
-* **Symptom:** Der ESP32 erkennt undefinierte Signale als Tastendruck. Sobald das WLAN verbunden wird, löst der HANIMAT einen Reset aus und landet in einer **Endlos-Bootschleife**.
-* **Aktueller Status:** Um dieses Problem zu umgehen, ist der Reset-Mechanismus in der aktuellen Firmware-Version **deaktiviert**.
-
-> [!IMPORTANT]
-> **Hinweis für DIY-Aufbauten:** Falls du die Reset-Funktion im Code reaktivierst, musst du zwingend einen externen **Pull-Down-Widerstand** (z. B. 10kΩ gegen GND) an GPIO 34 anbringen, um den Pin zu stabilisieren und die Bootschleife zu verhindern.
+### Derzeit Fehlerfrei :)
 
 ## 🛠️ Firmware Installation
 

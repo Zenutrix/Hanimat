@@ -174,6 +174,9 @@ bool telegramNotifyOnSale = false;
 bool telegramNotifyAlmostEmpty = true;
 bool telegramNotifyEmpty = true;
 
+// Flag zur Erkennung eines offenen Pins
+bool resetPinIsFloating = false; 
+
 // --- Payment & Credit ---
 float credit = 0.0;
 volatile int coinPulseCount = 0;
@@ -485,6 +488,31 @@ void setup() {
 
   logMessage("Relay board initialized (Fast Mode).");
 
+// --- Pin-Modus festlegen ---
+pinMode(WIFI_RESET_BUTTON, INPUT);  
+delay(100); // Dem Pin Zeit geben, sich zu stabilisieren
+
+// --- Floating Pin Check ---
+int lowCount = 0; 
+int sampleCount = 500; 
+for (int i = 0; i < sampleCount; i++) {
+  if (digitalRead(WIFI_RESET_BUTTON) == LOW) {
+    lowCount++;
+  }
+  delayMicroseconds(100);
+}
+
+logMessage("Reset-Pin Check: " + String(lowCount) + " von " + String(sampleCount) + " Samples waren LOW.");
+
+// Wenn mehr als 1% der Messungen LOW waren, ist kein echter Pull-Up vorhanden
+if (lowCount > 5) {
+  resetPinIsFloating = true;
+  logMessage("WARNUNG: Reset-Pin floating! Button wird SOFTWARESEITIG DEAKTIVIERT.");
+} else {
+  resetPinIsFloating = false;
+  logMessage("STATUS: Reset-Pin stabil erkannt.");
+}
+
   // --- Initialize Telegram Client ---
   secured_client.setInsecure(); // Allow connections without certificate validation
   logMessage("Telegram client set to 'insecure' mode.");
@@ -691,9 +719,9 @@ void loop() {
   // Always handle web server clients
   server.handleClient();
 
-/*
-// --- Hochgradig entstörte Reset-Logik mit Keypad-Bestätigung ---
-  if (digitalRead(WIFI_RESET_BUTTON) == LOW) {
+
+// --- Reset-Logik mit Keypad-Bestätigung ---
+  if (!resetPinIsFloating && digitalRead(WIFI_RESET_BUTTON) == LOW) {
     
     // Sicherheitsprüfung: Muss 500ms STABIL gedrückt sein (Filtert Rauschen)
     unsigned long stabilityTimer = millis();
@@ -762,7 +790,7 @@ void loop() {
       }
     }
   }
-*/
+
   // --- Main state machine ---
   if (currentSystemState != CurrentSystemState::OTA_UPDATE) {
     // Timeout for user inactivity, resetting the screen to default
