@@ -51,6 +51,20 @@ In diesem Repository findest du alles, was du für die **Stand-Alone Bargeld-Ver
 * 📢 **Telegram-Benachrichtigung**: Statusmeldungen in Echtzeit (Verkäufe, Bestand)
 * 🌐 **Offline-Modus**: Betrieb auch ohne Internet (lokaler Access Point)
 
+### 📡 Community-Status & Transparenz
+
+Da dieses Projekt **Open Source** und kostenlos ist, habe ich keine Verkaufszahlen. Um trotzdem zu sehen, wie viele Hanimaten weltweit gebaut wurden und aktiv sind, sendet die Firmware einmal pro Stunde ein kurzes, technisches "Lebenszeichen".
+
+📊 **Live-Status ansehen:** [status.hanimat.at](https://status.hanimat.at)
+
+**Das Prinzip:**
+* **Bitte aktiv lassen! ❤️** Es motiviert mich extrem zu sehen, dass die Arbeit genutzt wird.
+* **Abschalten:** Wer das absolut nicht möchte, kann es im Code (`bool statusEnabled = false;`) einfach deaktivieren.
+
+**Datenschutz (Kurz & Knapp):**
+* ✅ **Wir speichern:** Nur die Hardware-ID (um Geräte zu zählen), die Firmware-Version und das Land (z.B. "Österreich").
+* ❌ **Wir speichern NICHT:** Deine IP-Adresse (wird zur Ländererkennung kurz genutzt und sofort gelöscht), deinen genauen Standort oder irgendwelche Verkaufszahlen.
+
 ## 🔌 Hardware & Pinbelegung
 
 | Komponente | Anschluss an ESP32 | Beschreibung |

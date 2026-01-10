@@ -48,6 +48,7 @@
 #include <Update.h>
 #include <UniversalTelegramBot.h> // Telegram Bot Library
 #include <ArduinoJson.h>
+#include <HTTPClient.h>
 
 // --- Custom Fonts ---
 #include "fonts/Poppins_Black_14.h"
@@ -174,6 +175,13 @@ bool telegramNotifyOnSale = false;
 bool telegramNotifyAlmostEmpty = true;
 bool telegramNotifyEmpty = true;
 
+// --- Hanimat Status Network ---
+bool statusEnabled = true; // Variable zum Deaktivieren/Aktivieren
+const char* statusServerUrl = "https://status.hanimat.at/api.php";
+const char* statusApiKey = "HanimatKeyStatus";
+unsigned long lastStatusPing = 0;
+const unsigned long statusInterval = 3600000; // Alle 60 Minuten (in ms)
+
 // Flag zur Erkennung eines offenen Pins
 bool resetPinIsFloating = false; 
 
@@ -246,6 +254,7 @@ void processAcceptedCoin();
 void handleLogDataRequest();
 void displayOTAMessageTFT(String line1, String line2 = "", String line3 = "", uint16_t color = ILI9341_ORANGE);
 void checkOverallStockLevel();
+void sendHanimatStatusPing();
 
 // Web Server Handlers
 void handleRoot();
@@ -697,6 +706,9 @@ if (lowCount > 5) {
   // --- Initialize Web Server ---
   setupWebServer();
 
+  // --- Start Hanimat Status Network ---
+  sendHanimatStatusPing();
+
   // --- Initialize Payment Acceptors ---
   pinMode(COIN_ACCEPTOR_PIN, INPUT);
   attachInterrupt(digitalPinToInterrupt(COIN_ACCEPTOR_PIN), coinAcceptorISR, RISING);
@@ -835,6 +847,11 @@ void loop() {
           logMessage("WiFi connection lost. Attempting to reconnect...");
           WiFi.reconnect();
       }
+  }
+  // --- HANIMAT STATUS HEARTBEAT ---
+  // Prüfen, ob die Zeit (statusInterval = 60 min) abgelaufen ist
+  if (millis() - lastStatusPing > statusInterval) {
+     sendHanimatStatusPing();
   }
   delay(10); // Small delay to prevent watchdog timer issues
 }
@@ -2159,4 +2176,64 @@ void checkOverallStockLevel() {
         almostEmptyNotificationSent = false;
         emptyNotificationSent = false;
     }
+
+}
+/**
+ * @brief Sendet einen Status-Ping an das Hanimat-Netzwerk.
+ * Respektiert strikt den Offline-Schalter und nutzt Timeouts.
+ */
+void sendHanimatStatusPing() {
+  // 1. HARDWARE VORRANG: Prüfen, ob Offline-Modus per Schalter aktiv ist
+  // Wenn Pin 27 LOW ist (Offline Modus), brechen wir SOFORT ab.
+  if (digitalRead(OFFLINE_MODE_PIN) == LOW) {
+    // Wir loggen hier nichts, um das Log im Offline-Betrieb nicht vollzumüllen.
+    return; 
+  }
+
+  // 2. SOFTWARE CHECK: Ist der Status-Dienst in der Config aktiv?
+  if (!statusEnabled) return;
+
+  // 3. WLAN CHECK: Ohne Internet kein Ping
+  if (WiFi.status() != WL_CONNECTED) {
+    // Kein Log nötig, WiFi-Manager kümmert sich um Reconnects
+    return;
+  }
+
+  // 4. HEARTBEAT SENDEN
+  HTTPClient http;
+  WiFiClientSecure client; // Wichtig für HTTPS
+  client.setInsecure();    // Zertifikate nicht prüfen (verhindert SSL Fehler)
+  
+  // Timeout setzen! WICHTIG: Max 3 Sekunden warten, sonst hängt der Automat
+  http.setTimeout(3000); 
+
+  String chipId = String((uint32_t)ESP.getEfuseMac(), HEX);
+  chipId.toUpperCase();
+
+  // URL zusammenbauen
+  String url = String(statusServerUrl) + "?id=" + chipId + "&key=" + statusApiKey + "&v=" + FIRMWARE_VERSION;
+
+  logMessage("Status: Sende Heartbeat...");
+  // logMessage("DEBUG URL: " + url); // Kannst du später auskommentieren
+
+  // Anfrage starten
+  if (http.begin(client, url)) { // Nutzung von 'client' für HTTPS
+    int httpCode = http.GET();
+
+    if (httpCode > 0) {
+      if (httpCode == 200) {
+        logMessage("Status: OK (200)");
+      } else {
+        logMessage("Status: Server antwortet " + String(httpCode));
+      }
+    } else {
+      logMessage("Status: Fehler (" + http.errorToString(httpCode) + ")");
+    }
+    http.end();
+  } else {
+    logMessage("Status: Konnte Verbindung nicht aufbauen");
+  }
+
+  // Zeitstempel aktualisieren, damit der nächste Ping erst in 60min kommt
+  lastStatusPing = millis();
 }
