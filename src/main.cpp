@@ -2,7 +2,7 @@
  * @file main.cpp
  * @author Thomas Schöpf / Hanimat
  * @brief Firmware für die HANIMAT Verkaufsmaschine basierend auf der ESP32 Plattform.
- * @version 1.2.5-noec
+ * @version 1.2.6-noec
  * @date 2025-12-01
  *
  * © Copyright Thomas Schöpf
@@ -59,7 +59,7 @@
 // =================================================================
 //                      FIRMWARE VERSION
 // =================================================================
-const String FIRMWARE_VERSION = "V1.2.5-noec";
+const String FIRMWARE_VERSION = "V1.2.6-noec";
 
 // =================================================================
 //                      CONFIGURATION CONSTANTS
