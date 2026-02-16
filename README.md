@@ -12,8 +12,8 @@ Willkommen beim HANIMAT! Dieses Projekt wurde ins Leben gerufen, um Imkern und D
 | :--- | :--- |
 | **SumUp Integration** 💳 | Volle Unterstützung für bargeldlose Zahlungen via SumUp Terminal. |
 | **Online Update (OTA)** ☁️ | Firmware-Updates jetzt kinderleicht per Klick im Webinterface installieren. |
-| **Flash-Schonung** 💾 | Intelligentes Speichermanagement schont den ESP32 (Guthaben primär im RAM). |
-| **Coin Acceptor 2.0** 💰 | Angepasste und stabilere Logik für die Münzerkennung. |
+| **Flash-Schonung** 💾 | Guthabenstände werden im RAM verwaltet, um den Flash-Speicher des ESP32 zu schonen. |
+| **Coin Acceptor 2.0** 💰 | Überarbeitete Logik und Kalibrierung für eine stabilere Münzerkennung. |
 | **Modernes WebInterface** 🌐 | Optisches Redesign des Admin-Panels für bessere mobile Bedienung. |
 | **Unified Display UI** 🖥️ | Vereinheitlichte Statusmeldungen und Symbole am TFT-Display. |
 
@@ -30,7 +30,7 @@ Willkommen beim HANIMAT! Dieses Projekt wurde ins Leben gerufen, um Imkern und D
 * **Hardware-Langlebigkeit**: Minimierte Schreibzyklen auf den Flash-Speicher erhöhen die Lebensdauer deines Automaten massiv.
 * **Echtzeit-Infos**: Telegram-Benachrichtigungen bei Verkäufen, Bestandsänderungen oder Störungen.
 * **WLAN-Konfiguration**: Einfacher WiFi-Manager mit eigenem Access Point für die Ersteinrichtung.
-* **Offline-Modus**: Betrieb auch ohne Internetverbindung möglich (lokales Backup).
+* **Online-Update**: Neue Firmware-Versionen bequem per Klick im Webportal einspielen.
 
 ## 🔌 Hardware & Pinbelegung
 
@@ -52,28 +52,31 @@ Um die Weiterentwicklung zu motivieren, sendet die Firmware einmal pro Stunde ei
 * **Datenschutz:** Wir speichern nur die Hardware-ID (Zähler), Version und das Land. Keine IP-Adressen, keine Standorte, keine Umsätze.
 * **Deaktivierung:** Wer das nicht möchte, setzt in der `main.cpp`: `bool statusEnabled = false;`.
 
+## 🧠 Community & Austausch
+
+Tritt unserer Telegram-Gruppe bei, stell Fragen, teile deine Ideen und zeig deine eigene HANIMAT-Version. Hier helfen User anderen Usern:
+
+➡️ **Telegram Gruppe:** [https://t.me/+igwol5kmQGpiYWFk](https://t.me/+igwol5kmQGpiYWFk)
+
 ## 🛠️ Installation & Online-Update
 
 ### Erstinstallation
-1.  **Visual Studio Code + PlatformIO** installieren.
-2.  Repository klonen, ESP32 per USB anschließen und auf **Upload** klicken.
+1. **Visual Studio Code + PlatformIO** installieren.
+2. Repository klonen, ESP32 per USB anschließen und auf **Upload** klicken.
 
 ### Zukünftige Updates
 Dank der neuen **OTA-Funktion** (Over-the-Air) musst du den Automaten nie wieder aufschrauben. Sobald ein Update verfügbar ist, kannst du es mit einem Klick im Webinterface einspielen.
 
-## 📽️ Video-Anleitungen & Support
+## 📽️ Video-Anleitungen
 
 Schau dir den Aufbau und die Funktionen im Detail an:
 ➡️ [YouTube-Kanal: Thomas Schöpf](https://www.youtube.com/@schoepf-tirol)
-➡️ [Diskussionen & Hilfe auf GitHub](https://github.com/Zenutrix/Hanimat/discussions)
 
 ## 📜 Lizenz & Urheberrecht
 
 * **Urheber:** Thomas Schöpf – [www.schoepf-tirol.at](https://www.schoepf-tirol.at)
 * **Projektseite:** [www.hanimat.at](https://www.hanimat.at)
 * **Lizenz:** [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/)
-
-> **Namensnennung erforderlich:** Bitte gib bei Weitergabe "Thomas Schöpf – HANIMAT-Projekt" als Urheber an. Die kommerzielle Nutzung oder der Verkauf der Software/Pläne ist untersagt.
 
 ---
 **Let's bring local products to the people – mit deinem eigenen HANIMAT!**
