@@ -1,157 +1,80 @@
-# 🍯 HANIMAT – Der Open-Source Honigautomat (BETA)
+# 🍯 HANIMAT – Der Open-Source Honigautomat (V1.4.0-ec)
 
-> **⚠️ WICHTIGER HINWEIS ZUM RELEASE (V1.2.5-noec):**
-> Dies ist die **erste BETA-Version** der HANIMAT Firmware.
-> **Aktueller Status:** Diese Version unterstützt vollständig die **Barzahlung (Münzen & Geldscheine)**.
-> Die Integration von EC-Terminals ist in diesem Release **nicht** enthalten. Das **Sigma Terminal von myPos** wurde bereits bestellt und wir warten derzeit auf den Erhalt, um die Integration finalisieren zu können (Stand: 01.12.2025).
+> **🚀 RELEASE-UPDATE (V1.4.0-ec):**
+> Dies ist der bisher größte Meilenstein! Der HANIMAT unterstützt nun offiziell **bargeldloses Bezahlen via SumUp**. 
+> Zusätzlich wurden massive Optimierungen an der Hardware-Schonung und der Benutzeroberfläche vorgenommen.
 
-Willkommen beim HANIMAT! Dieses Projekt wurde ins Leben gerufen, um Imkern und Direktvermarktern eine **einfache, moderne und kostengünstige Möglichkeit** zu bieten, Produkte rund um die Uhr selbstständig zu verkaufen – ganz ohne teure Automatenlösungen.
+Willkommen beim HANIMAT! Dieses Projekt bietet Imkern und Direktvermarktern eine **einfache, moderne und kostengünstige Möglichkeit**, Produkte rund um die Uhr selbstständig zu verkaufen.
 
-## 🌟 Was ist der HANIMAT?
+## 🌟 Was ist neu in Version 1.4.0-ec?
 
-Der HANIMAT ist ein modularer Selbstbedienungsautomat, ideal für den Verkauf von:
-
-* Honig 🍯
-* Eiern 🥚
-* Marmelade 🍓
-* Nudeln 🍝
-* Käse 🧀
-  und vielen weiteren regionalen Produkten.
-
-Das Projekt basiert vollständig auf **Open Source** und ist **DIY-freundlich**, **flexibel anpassbar** und **community-getrieben**.
+| Feature | Details |
+| :--- | :--- |
+| **SumUp Integration** 💳 | Volle Unterstützung für bargeldlose Zahlungen via SumUp Air/Solo. |
+| **Flash-Schonung** 💾 | Guthabenstände werden zur Hardware-Schonung prioritär im RAM verwaltet. |
+| **Coin Acceptor 2.0** 💰 | Optimierte Logik für stabilere Münzerkennung und Kalibrierung. |
+| **Modernes WebInterface** 🌐 | Optisch überarbeitetes Admin-Panel für bessere Übersicht auf Mobilgeräten. |
+| **Unified Display UI** 🖥️ | Vereinheitlichte Fehlermeldungen und Statusanzeigen am TFT. |
 
 ## ✨ Die vier Säulen des HANIMAT
 
-| Säule | Beschreibung |
-| :--- | :--- |
-| **Open Source** 📖 | Alle Pläne, Codes und Anleitungen sind frei verfügbar. |
-| **DIY-freundlich** 🛠️ | Gebaut mit Standard-Komponenten und Werkzeugen. |
-| **Flexibel** 📐 | Von 6 großen Gläsern bis zu 16 kleinen Fächern – passt sich deinen Bedürfnissen an. |
-| **Community** 🤝 | HANIMAT lebt vom Austausch. Deine Ideen sind willkommen! |
+* **Open Source** 📖: Alle Pläne, Codes und Anleitungen sind frei verfügbar.
+* **DIY-freundlich** 🛠️: Gebaut mit Standard-Komponenten (ESP32, ILI9341).
+* **Flexibel** 📐: Skalierbar von 6 bis zu 16 Fächern via I2C.
+* **Community** 🤝: HANIMAT lebt vom Austausch und deinen Ideen!
 
-## 🚀 Los geht's – Bau deinen eigenen HANIMAT!
+## 🚀 Einstieg & Hardware
 
-In diesem Repository findest du alles, was du für die **Stand-Alone Bargeld-Version** brauchst:
+In diesem Repository findest du alles für die **Hybrid-Version (Bargeld + EC)**:
 
 📂 **GitHub Repository:** [https://github.com/Zenutrix/Hanimat/](https://github.com/Zenutrix/Hanimat/)
 
-* ⚡ **Elektronik & Software**: Schaltpläne, Pinout, Materialliste, Firmware
-
-## ⚙️ Technische Details (Beta V1.2.5)
-
 ### ✅ Funktionsübersicht der Firmware
+* **Zahlungsmethoden**: Münzprüfer, Banknotenprüfer & SumUp Terminal.
+* **Hardware-Schutz**: Minimierte Schreibzyklen auf den internen Speicher für maximale Lebensdauer des ESP32.
+* **Konnektivität**: WiFi-Manager, Telegram-Benachrichtigungen bei Verkauf/Fehler.
+* **Admin-Panel**: Passwortgeschützte Verwaltung von Preisen und Beständen.
+* **OTA-Updates**: Bequemes Update der Firmware über das Webinterface.
 
-* 🖥️ **TFT-Oberfläche** (ILI9341): Bedienfreundliche GUI
-* 🔢 **Keypad-Steuerung** (4x3 Matrix): Produktauswahl
-* 💰 **Zahlungsabwicklung**: Münz- & Banknotenprüfer (Impuls-basiert)
-* 🔌 **Relaisansteuerung**: Bis zu 16 Fächer über I2C-Relaiskarte
-* 📶 **WiFi-Manager**: WLAN-Konfiguration über Webportal
-* 🌐 **Webinterface**: Verwaltung per Passwort-geschütztem Admin-Panel
-* 📲 **OTA-Updates**: Firmware aktualisieren über Web
-* 📢 **Telegram-Benachrichtigung**: Statusmeldungen in Echtzeit (Verkäufe, Bestand)
-* 🌐 **Offline-Modus**: Betrieb auch ohne Internet (lokaler Access Point)
-
-### 📡 Community-Status & Transparenz
-
-Da dieses Projekt **Open Source** und kostenlos ist, habe ich keine Verkaufszahlen. Um trotzdem zu sehen, wie viele Hanimaten weltweit gebaut wurden und aktiv sind, sendet die Firmware einmal pro Stunde ein kurzes, technisches "Lebenszeichen".
-
-📊 **Live-Status ansehen:** [status.hanimat.at](https://status.hanimat.at)
-
-**Das Prinzip:**
-* **Bitte aktiv lassen! ❤️** Es motiviert mich extrem zu sehen, dass die Arbeit genutzt wird.
-* **Abschalten:** Wer das absolut nicht möchte, kann es im Code (`bool statusEnabled = false;`) einfach deaktivieren.
-
-**Datenschutz (Kurz & Knapp):**
-* ✅ **Wir speichern:** Nur die Hardware-ID (um Geräte zu zählen), die Firmware-Version und das Land (z.B. "Österreich").
-* ❌ **Wir speichern NICHT:** Deine IP-Adresse (wird zur Ländererkennung kurz genutzt und sofort gelöscht), deinen genauen Standort oder irgendwelche Verkaufszahlen.
-
-## 🔌 Hardware & Pinbelegung
+## 🔌 Hardware & Pinbelegung (Aktualisiert)
 
 | Komponente | Anschluss an ESP32 | Beschreibung |
 | :--- | :--- | :--- |
-| TFT_CS | GPIO 26 | TFT Chip Select |
-| TFT_DC | GPIO 4 | TFT Data/Command |
-| TFT_RST | GPIO 16 | TFT Reset |
-| TFT_SCK | GPIO 18 | SPI Clock |
-| TFT_MOSI | GPIO 23 | SPI Datenleitung |
-| I2C SDA (Relais) | GPIO 22 | I2C Datenleitung |
-| I2C SCL (Relais) | GPIO 21 | I2C Taktleitung |
-| Münzprüfer | GPIO 5 | COIN_ACCEPTOR_PIN |
-| Banknotenprüfer | GPIO 32 | BILL_ACCEPTOR_PIN |
-| Banknoten-Sperre | GPIO 33 | BILL_INHIBIT_PIN |
-| Reset-Taster | GPIO 34 | WIFI_RESET_BUTTON |
-| Offline-Modus Schalter | GPIO 27 | OFFLINE_MODE_PIN |
-| Piezo-Buzzer | GPIO 25 | BUZZER_PIN |
-| Keypad Zeilen | GPIO 15, 14, 12, 17 | KEYPAD_ROWS |
-| Keypad Spalten | GPIO 2, 19, 13 | KEYPAD_COLS |
+| **SumUp (Serial)** | *Siehe SumUpController.h* | Anbindung des Terminals |
+| **Münzprüfer** | GPIO 5 | COIN_ACCEPTOR_PIN |
+| **Banknotenprüfer** | GPIO 32 | BILL_ACCEPTOR_PIN |
+| **TFT Display** | SPI (Standard) | Visualisierung & GUI |
+| **I2C Relais** | GPIO 21 (SCL) / 22 (SDA) | Steuerung der Fach-Magnetventile |
 
-## 🐛 Bekannte Probleme & Bugfixes
+## 📡 Community-Status & Transparenz
 
-### Derzeit Fehlerfrei :)
+Um die Weiterentwicklung zu motivieren, sendet die Firmware einmal pro Stunde ein technisches "Lebenszeichen".
+📊 **Live-Status:** [status.hanimat.at](https://status.hanimat.at)
 
-## 🛠️ Firmware Installation
+* **Privatsphäre:** Es werden keine persönlichen Daten oder Umsätze übertragen. Nur Hardware-ID, Version und Land.
+* **Deaktivierung:** In der `main.cpp` via `bool statusEnabled = false;` möglich.
 
-**Empfohlen: Visual Studio Code + PlatformIO**
+## 🛠️ Installation & Setup
 
-### 1. Setup
-
-* Installiere [Visual Studio Code](https://code.visualstudio.com/)
-* Installiere die Erweiterung **PlatformIO IDE**
-
-### 2. Projekt öffnen
-
-* Öffne diesen Repository-Ordner in VS Code
-* PlatformIO erkennt automatisch die `platformio.ini`
-
-### 3. Firmware aufspielen
-
-* Verbinde deinen ESP32 per USB
-* In PlatformIO unten auf **→ Upload** klicken
+1.  **VS Code + PlatformIO** installieren.
+2.  Repository klonen oder herunterladen.
+3.  `platformio.ini` prüfen (Version 1.4.0-ec ist voreingestellt).
+4.  ESP32 verbinden und auf **Upload** klicken.
 
 ## 🌐 WLAN-Ersteinrichtung
 
-| Modus | Auslöser (GPIO 27) | SSID | Passwort |
-| :--- | :--- | :--- | :--- |
-| **Offline-Modus** | GND verbunden | HANIMAT-Offline | `Honig1234` |
-| **Online-Modus** | GND nicht verbunden | HANIMAT-Setup | `Honig1234` |
+| Modus | SSID | Passwort |
+| :--- | :--- | :--- |
+| **Setup-Modus** | HANIMAT-Setup | `Honig1234` |
+| **Offline-Modus** | HANIMAT-Offline | `Honig1234` |
 
-* Verbinde dich mit dem WLAN
-* Das Konfigurationsportal öffnet sich im Browser (meist automatisch, sonst 192.168.4.1)
-* Nach Verbindung mit deinem Heim-WLAN zeigt das Display die IP-Adresse an
-* Zugriff auf das Web-Panel über diese IP (Standard-Login: `admin`)
-
-## 📽️ Video-Anleitungen
-
-Schau dir den Aufbau auf meinem YouTube-Kanal an:
-
-➡️ [Zum Kanal von Thomas Schöpf](https://www.youtube.com/@schoepf-tirol)
-
-## 🧠 Community & Austausch
-
-Stell Fragen, teile deine Ideen und zeig deine eigene HANIMAT-Version:
-
-➡️ [GitHub Diskussionen](https://github.com/Zenutrix/Hanimat/discussions)
+*Nach der Verbindung öffnet sich automatisch das Portal zur Eingabe deiner WLAN-Daten.*
 
 ## 📜 Lizenz & Urheberrecht
 
 * **Urheber:** Thomas Schöpf – [www.schoepf-tirol.at](https://www.schoepf-tirol.at)
-* **PCB-Desing:** Roland Rust
+* **PCB-Design:** Roland Rust
 * **Projektseite:** [www.hanimat.at](https://www.hanimat.at)
-* **Lizenz:** [CC BY-NC-SA 4](https://creativecommons.org/licenses/by-nc-sa/4.0/)
+* **Lizenz:** [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/)
 
-### Was du darfst ✅
-
-* HANIMAT-Pläne & Software frei nutzen und anpassen
-* Produkte (z. B. Honig, Eier) über deinen Automaten verkaufen
-
-### Was du nicht darfst ❌
-
-* Die Software/Pläne oder direkte Ableitungen **verkaufen**
-* Kommerzielle Automatenlösungen basierend auf HANIMAT vertreiben
-
-**Namensnennung erforderlich** bei Weitergabe/Veröffentlichung:
-
-Bitte gib *Thomas Schöpf – HANIMAT-Projekt* als Urheber an.
-
-> **Let's bring local products to the people – mit deinem eigenen HANIMAT!**
-        
+> **Namensnennung erforderlich:** Bitte gib bei Veröffentlichung "Thomas Schöpf – HANIMAT-Projekt" als Urheber an. Kommerzielle Nutzung der Software/Pläne ist untersagt.
