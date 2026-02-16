@@ -85,7 +85,7 @@ const int DEFAULT_MAX_SLOTS = 16;
 const int MAX_SLOTS = 16;
 
 // --- Timing and Timeout Values (in milliseconds) ---
-unsigned long COIN_PROCESSING_DELAY = 120;
+unsigned long COIN_PROCESSING_DELAY = 150;
 unsigned long BILL_ISR_DEBOUNCE_MS = 75;
 unsigned long BILL_GROUP_PROCESSING_TIMEOUT_MS = 1500;
 unsigned long DISPENSE_RELAY_ON_TIME = 5000;
@@ -239,9 +239,6 @@ volatile unsigned long billAcceptorPulseCount = 0;
 volatile unsigned long lastBillPulseEdgeTime = 0;
 volatile unsigned long lastBillDebounceEdgeTime = 0;
 
-float lastCreditSaved = 0.0;
-unsigned long lastCreditChangeTime = 0;
-const unsigned long NVS_SAVE_DELAY = 10000; // 10 Sekunden warten nach letztem Einwurf
 
 // --- Display Customization ---
 const int SLOGAN_MAX_LENGTH = 24; // Zeichenlimit für den Slogan
@@ -300,7 +297,6 @@ void checkOverallStockLevel();
 void sendHanimatStatusPing();
 void handleSumUpPaymentInitiation(); 
 void drawPageHeader(String title, uint16_t color = HANIMAT_HEADER);
-void saveCreditToNVS(bool force = false);
 // Neue Funktionen für Online Update
 void handleCheckOnlineUpdate();
 void handleStartOnlineUpdate();
@@ -491,21 +487,6 @@ void displayOTAMessageTFT(String line1, String line2, String line3, uint16_t col
   }
 }
 
-/**
- * @brief Sichert das aktuelle Guthaben im NVS, falls nötig.
- */
-void saveCreditToNVS(bool force) {
-    // Nur speichern, wenn sich der Wert geändert hat
-    if (credit != lastCreditSaved || force) {
-        preferences.begin("hanimat", false);
-        preferences.putFloat("credit", credit);
-        preferences.end();
-        
-        lastCreditSaved = credit;
-        logMessage("NVS: Guthaben gesichert: " + String(credit, 2) + " EUR");
-    }
-}
-
 // =================================================================
 //                      INTERRUPT SERVICE ROUTINES
 // =================================================================
@@ -514,13 +495,8 @@ void saveCreditToNVS(bool force) {
  * @brief ISR for the coin acceptor. Increments a pulse counter.
  */
 void IRAM_ATTR coinAcceptorISR() {
-  unsigned long now = millis();
-  // Nur zählen, wenn der letzte Puls mindestens 20ms her ist
-  // Das filtert "Prellen" bei FAST-Einstellung effektiv raus
-  if (now - lastCoinPulseTime > 20) { 
-    coinPulseCount++;
-    lastCoinPulseTime = now;
-  }
+  coinPulseCount++;
+  lastCoinPulseTime = millis();
 }
 
 /**
@@ -547,7 +523,7 @@ void setup() {
   logMessage("System starting: HANIMAT " + FIRMWARE_VERSION);
   bootTime = millis();
 
-  // --- Initialize I2C ---
+// --- Initialize I2C ---
   Wire.begin();
   Wire.setClock(50000L); // Set I2C clock to 50kHz for stability
   logMessage("I2C clock set to 50kHz.");
@@ -572,29 +548,29 @@ void setup() {
 
   logMessage("Relay board initialized (Fast Mode).");
 
-  // --- Pin-Modus festlegen ---
-  pinMode(WIFI_RESET_BUTTON, INPUT);  
-  delay(100); // Dem Pin Zeit geben, sich zu stabilisieren
+// --- Pin-Modus festlegen ---
+pinMode(WIFI_RESET_BUTTON, INPUT);  
+delay(100); // Dem Pin Zeit geben, sich zu stabilisieren
 
-  // --- Floating Pin Check ---
-  int lowCount = 0; 
-  int sampleCount = 500; 
-  for (int i = 0; i < sampleCount; i++) {
-    if (digitalRead(WIFI_RESET_BUTTON) == LOW) {
-      lowCount++;
-    }
-    delayMicroseconds(100);
+// --- Floating Pin Check ---
+int lowCount = 0; 
+int sampleCount = 500; 
+for (int i = 0; i < sampleCount; i++) {
+  if (digitalRead(WIFI_RESET_BUTTON) == LOW) {
+    lowCount++;
   }
+  delayMicroseconds(100);
+}
 
-  logMessage("Reset-Pin Check: " + String(lowCount) + " von " + String(sampleCount) + " Samples waren LOW.");
+logMessage("Reset-Pin Check: " + String(lowCount) + " von " + String(sampleCount) + " Samples waren LOW.");
 
-  if (lowCount > 5) {
-    resetPinIsFloating = true;
-    logMessage("WARNUNG: Reset-Pin floating! Button wird SOFTWARESEITIG DEAKTIVIERT.");
-  } else {
-    resetPinIsFloating = false;
-    logMessage("STATUS: Reset-Pin stabil erkannt.");
-  }
+if (lowCount > 5) {
+  resetPinIsFloating = true;
+  logMessage("WARNUNG: Reset-Pin floating! Button wird SOFTWARESEITIG DEAKTIVIERT.");
+} else {
+  resetPinIsFloating = false;
+  logMessage("STATUS: Reset-Pin stabil erkannt.");
+}
 
   // --- Initialize Telegram Client ---
   secured_client.setInsecure(); // Allow connections without certificate validation
@@ -613,6 +589,7 @@ void setup() {
   pinMode(BILL_INHIBIT_PIN, OUTPUT);
   digitalWrite(BILL_INHIBIT_PIN, HIGH); // Inhibit bill acceptor by default
 
+
   // --- Initialize Keypad Pins (Manual Scan Mode) ---
   for (int i = 0; i < KEYPAD_ROWS; i++) {
     pinMode(rowPins[i], OUTPUT);
@@ -623,37 +600,31 @@ void setup() {
   }
   logMessage("Keypad pins configured for manual scan with external pull-downs.");
 
-  // --- Load Settings from Preferences ---
+// --- Load Settings from Preferences ---
   preferences.begin("hanimat", false);
-
-  char kBuf[16]; // Statischer Buffer für NVS Keys (verhindert Heap-Fragmentierung)
 
   // --- NEU: Einmalige Initialisierung, falls das System "leer" ist ---
   if (!preferences.isKey("initialized")) {
       logMessage("ERSTSTART: Erzeuge Standardwerte im NVS...");
       
+      // Standard-Preise und Status einmalig anlegen
       for (int i = 0; i < MAX_SLOTS; i++) {
-          // Preise initialisieren
-          snprintf(kBuf, sizeof(kBuf), "price%d", i);
-          preferences.putFloat(kBuf, 5.0f + (i * 0.1f));
-          
-          // Verfügbarkeit initialisieren
-          snprintf(kBuf, sizeof(kBuf), "avail%d", i);
-          preferences.putBool(kBuf, true);
-          
-          // Sperre initialisieren
-          snprintf(kBuf, sizeof(kBuf), "locked%d", i);
-          preferences.putBool(kBuf, false);
+          preferences.putFloat(("price" + String(i)).c_str(), 5.0f + (i * 0.1f));
+          preferences.putBool(("avail" + String(i)).c_str(), true);
+          preferences.putBool(("locked" + String(i)).c_str(), false);
       }
       
+      // Standard-Passwort im NVS anlegen
       preferences.putString("password", DEFAULT_PASSWORD);
+      
+      // Markierung setzen, dass Initialisierung durchgelaufen ist
       preferences.putBool("initialized", true);
       logMessage("Initialisierung abgeschlossen.");
   }
 
   logMessage("Loading settings from Preferences...");
   
-  // Zeit- und Systemwerte laden
+  // Ab hier werden die Werte ganz normal geladen (wie in deinem Original)
   COIN_PROCESSING_DELAY = preferences.getULong("coinDelay", 150);
   BILL_ISR_DEBOUNCE_MS = preferences.getULong("billIsrDeb", 75);
   BILL_GROUP_PROCESSING_TIMEOUT_MS = preferences.getULong("billGrpTout", 1500);
@@ -686,16 +657,11 @@ void setup() {
   activeSlots = preferences.getInt("activeSlots", DEFAULT_MAX_SLOTS);
   if (activeSlots <= 0 || activeSlots > MAX_SLOTS) activeSlots = DEFAULT_MAX_SLOTS;
 
-  // Fächer laden mit statischen Key-Namen und Fallback-Werten
+
   for (int i = 0; i < MAX_SLOTS; i++) {
-    snprintf(kBuf, sizeof(kBuf), "price%d", i);
-    slotPrices[i]    = preferences.getFloat(kBuf, 5.0f + (i * 0.1f));
-    
-    snprintf(kBuf, sizeof(kBuf), "avail%d", i);
-    slotAvailable[i] = preferences.getBool(kBuf, true);
-    
-    snprintf(kBuf, sizeof(kBuf), "locked%d", i);
-    slotLocked[i]    = preferences.getBool(kBuf, false);
+    slotPrices[i]    = preferences.getFloat(("price" + String(i)).c_str());
+    slotAvailable[i] = preferences.getBool(("avail" + String(i)).c_str());
+    slotLocked[i]    = preferences.getBool(("locked" + String(i)).c_str());
   }
   
   credit = preferences.getFloat("credit", 0.0f);
@@ -709,6 +675,7 @@ void setup() {
   tft.setRotation(1); // Landscape mode
   tft.fillScreen(HANIMAT_BG);
    
+  // Use custom font for startup screen
   tft.setFont(&Poppins_Black14pt7b);
   tft.setTextColor(HANIMAT_HEADER);
   int16_t x1, y1; uint16_t w, h;
@@ -795,7 +762,7 @@ void setup() {
     } else {
       logMessage("WiFi connected! IP: " + WiFi.localIP().toString());
       configTime(0, 0, "pool.ntp.org");
-      setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1); 
+      setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1); // Zeitzone für Österreich/Deutschland inkl. Sommerzeit
       logMessage("NTP Zeit-Synchronisierung gestartet...");
       tzset();
       tft.fillScreen(HANIMAT_BG);
@@ -920,11 +887,6 @@ void loop() {
       }
     }
   }
-
-  // Guthaben verzögert speichern (Wear Leveling)
-  if (credit != lastCreditSaved && (millis() - lastCreditChangeTime > NVS_SAVE_DELAY)) {
-        saveCreditToNVS();
-    }
 
   // --- Main state machine ---
   if (currentSystemState != CurrentSystemState::OTA_UPDATE && !isSumUpTransactionActive) {
@@ -1475,24 +1437,17 @@ void processDispenseJob() {
       return;
     }
       
-    // 1. Guthaben abziehen
+    // Deduct credit and update slot availability
     credit -= slotPrices[dispenseJob.slot];
     if (credit < 0) credit = 0;
-    
-    // 2. Slot als leer markieren
     slotAvailable[dispenseJob.slot] = false;
     logMessage("Purchase complete for slot " + String(dispenseJob.slot + 1) + ". New credit: " + String(credit, 2));
 
-    // 3. Änderungen permanent im Flash speichern
-    // Wir nutzen einen statischen Buffer für den Key-Namen (z.B. "avail5")
-    char availKey[12];
-    snprintf(availKey, sizeof(availKey), "avail%d", dispenseJob.slot);
-
+    // Persist changes to Preferences
     preferences.begin("hanimat", false);
-    preferences.putBool(availKey, false); // NEU: Statischer Key statt dynamischem String
+    preferences.putFloat("credit", credit);
+    preferences.putBool(("avail" + String(dispenseJob.slot)).c_str(), slotAvailable[dispenseJob.slot]);
     preferences.end();
-    
-    saveCreditToNVS(true); // Sofortiges Speichern des Guthabens erzwingen (Wear-Leveling Logik)
     
     // Send notifications
     if (telegramNotifyOnSale) {
@@ -1535,48 +1490,34 @@ void processDispenseJob() {
  * @brief Processes coin pulses after a delay to group them into a single coin event.
  */
 void processAcceptedCoin() {
-  // Überprüfen, ob Pulse vorhanden sind und die Lücke zwischen den Münzen groß genug ist
   if (coinPulseCount > 0 && (millis() - lastCoinPulseTime > COIN_PROCESSING_DELAY)) {
-    
     int pulsesToProcess;
-    
-    // 1. KRITISCHE SEKTION: Wert sichern und Zähler SOFORT nullen
-    // Damit verpassen wir keine Pulse der nächsten Münze während der Logik unten.
     noInterrupts();
     pulsesToProcess = coinPulseCount;
-    coinPulseCount = 0; 
+    coinPulseCount = 0;
     interrupts();
 
-    logMessage("Münzprüfer: " + String(pulsesToProcess) + " Pulse erkannt.");
+    logMessage("Coin: Processing " + String(pulsesToProcess) + " pulses.");
 
-    // 2. MAPPING PRÜFEN (pulseValues Array)
     if (pulsesToProcess > 0 && pulsesToProcess < (sizeof(pulseValues) / sizeof(pulseValues[0]))) {
       int coinValueCents = pulseValues[pulsesToProcess];
-      
       if (coinValueCents > 0) {
-        // Guthaben im RAM erhöhen
         credit += (float)coinValueCents / 100.0;
+        logMessage("Coin accepted: " + String(pulsesToProcess) + " pulses -> " + String((float)coinValueCents / 100.0, 2) + " EUR. New credit: " + String(credit, 2) + " EUR");
         
-        // Timer für die verzögerte Flash-Speicherung (Wear-Leveling)
-        lastCreditChangeTime = millis(); 
+        preferences.begin("hanimat", false);
+        preferences.putFloat("credit", credit);
+        preferences.end();
 
-        logMessage("Guthaben aktualisiert: +" + String((float)coinValueCents / 100.0, 2) + " EUR");
-        
-        // Display-Update anfordern und System-Status setzen
         displayNeedsUpdate = true;
         lastUserInteractionTime = millis();
         currentSystemState = CurrentSystemState::USER_INTERACTION;
-        
-        // Akustisches Feedback (Piep auf 40ms verkürzt, um Zeit zu sparen)
-        ledcWriteTone(0, 1200); 
-        delay(40); 
-        ledcWriteTone(0, 0);
+        ledcWriteTone(0, 1200); delay(100); ledcWriteTone(0,0);
       } else {
-        logMessage("Münz-Fehler: Wert für " + String(pulsesToProcess) + " Pulse ist 0.");
+        logMessage("Coin: " + String(pulsesToProcess) + " pulses has a value of 0 (invalid pulse count).");
       }
     } else {
-      // Hilft beim Debugging: Zeigt an, wie viele Pulse bei Fehlern wirklich ankamen
-      logMessage("Coin Fehler: " + String(pulsesToProcess) + " Pulse passen zu keinem Mapping.");
+      logMessage("Coin: Invalid pulse count rejected: " + String(pulsesToProcess));
     }
   }
 }
@@ -1609,7 +1550,9 @@ void processBillAcceptorPulses() {
         credit += billValueEuros;
         logMessage("Bill accepted: " + String(pulsesToProcess) + " pulses -> " + String(billValueEuros) + " EUR. New credit: " + String(credit, 2) + " EUR");
         
-        lastCreditChangeTime = millis();
+        preferences.begin("hanimat", false);
+        preferences.putFloat("credit", credit);
+        preferences.end();
 
         displayNeedsUpdate = true;
         lastUserInteractionTime = millis();
@@ -3027,52 +2970,57 @@ void checkOverallStockLevel() {
  * Respektiert strikt den Offline-Schalter und nutzt Timeouts.
  */
 void sendHanimatStatusPing() {
-  // 1. HARDWARE-CHECK: Offline-Schalter prüfen
-  if (digitalRead(OFFLINE_MODE_PIN) == LOW) return; 
-
-  // 2. SOFTWARE-CHECK: Status aktiv?
-  if (!statusEnabled) return;
-
-  // 3. WLAN-CHECK: Nur wenn verbunden
-  if (WiFi.status() != WL_CONNECTED) return;
-
-  // 4. PERFORMANCE-CHECK: Nur pingen, wenn der Automat im Leerlauf (IDLE) ist
-  // Wenn gerade ein Verkauf läuft oder das Keypad benutzt wird, verschieben wir den Ping.
-  if (dispenseJob.active || currentSystemState != CurrentSystemState::IDLE) {
-      // Wir setzen den Timer so, dass er es in 1 Minute (60.000 ms) wieder probiert
-      lastStatusPing = millis() - (statusInterval - 60000); 
-      return;
+  // 1. HARDWARE VORRANG: Prüfen, ob Offline-Modus per Schalter aktiv ist
+  // Wenn Pin 27 LOW ist (Offline Modus), brechen wir SOFORT ab.
+  if (digitalRead(OFFLINE_MODE_PIN) == LOW) {
+    // Wir loggen hier nichts, um das Log im Offline-Betrieb nicht vollzumüllen.
+    return; 
   }
 
-  // 5. HEARTBEAT SENDEN
+  // 2. SOFTWARE CHECK: Ist der Status-Dienst in der Config aktiv?
+  if (!statusEnabled) return;
+
+  // 3. WLAN CHECK: Ohne Internet kein Ping
+  if (WiFi.status() != WL_CONNECTED) {
+    // Kein Log nötig, WiFi-Manager kümmert sich um Reconnects
+    return;
+  }
+
+  // 4. HEARTBEAT SENDEN
   HTTPClient http;
-  WiFiClientSecure client; 
-  client.setInsecure();  
+  WiFiClientSecure client; // Wichtig für HTTPS
+  client.setInsecure();    // Zertifikate nicht prüfen (verhindert SSL Fehler)
   
-  // Timeouts extrem verkürzen für flüssige Bedienung (1,5 Sekunden statt 3)
-  http.setConnectTimeout(1500); 
-  http.setTimeout(1500);
+  // Timeout setzen! WICHTIG: Max 3 Sekunden warten, sonst hängt der Automat
+  http.setTimeout(3000); 
 
   String chipId = String((uint32_t)ESP.getEfuseMac(), HEX);
   chipId.toUpperCase();
+
+  // URL zusammenbauen
   String url = String(statusServerUrl) + "?id=" + chipId + "&key=" + statusApiKey + "&v=" + FIRMWARE_VERSION;
 
   logMessage("Status: Sende Heartbeat...");
+  // logMessage("DEBUG URL: " + url); // Kannst du später auskommentieren
 
-  if (http.begin(client, url)) {
+  // Anfrage starten
+  if (http.begin(client, url)) { // Nutzung von 'client' für HTTPS
     int httpCode = http.GET();
-    if (httpCode == 200) {
+
+    if (httpCode > 0) {
+      if (httpCode == 200) {
         logMessage("Status: OK (200)");
-    } else if (httpCode > 0) {
-        logMessage("Status: Server Fehler " + String(httpCode));
+      } else {
+        logMessage("Status: Server antwortet " + String(httpCode));
+      }
     } else {
-        logMessage("Status: Timeout/Netzwerkfehler");
+      logMessage("Status: Fehler (" + http.errorToString(httpCode) + ")");
     }
     http.end();
   } else {
-    logMessage("Status: Verbindung fehlgeschlagen");
+    logMessage("Status: Konnte Verbindung nicht aufbauen");
   }
 
-  // Zeitstempel aktualisieren
+  // Zeitstempel aktualisieren, damit der nächste Ping erst in 60min kommt
   lastStatusPing = millis();
 }

@@ -2,8 +2,8 @@
  * @file main.cpp
  * @author Thomas Schöpf / Hanimat
  * @brief Firmware für die HANIMAT Verkaufsmaschine basierend auf der ESP32 Plattform.
- * @version 1.4.0-ec
- * @date 02-02-2026
+ * @version 1.3.9-ec
+ * @date 25-01-2026
  *
  * © Copyright Thomas Schöpf
  *
@@ -27,38 +27,6 @@
 #include <UniversalTelegramBot.h> // Telegram Bot Library
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
-
-// =================================================================
-//  LOGGING SYSTEM
-// =================================================================
-#define MAX_LOG_LINES 50
-String logBuffer[MAX_LOG_LINES]; 
-int logIndex = 0;
-
-/**
- * @brief Zentrale Log-Funktion mit Datum und Uhrzeit
- */
-void logMessage(const String& msg) {
-  struct tm timeinfo;
-  char timeString[20];
-  
-  // Versuche die aktuelle Uhrzeit zu holen
-  if (getLocalTime(&timeinfo)) {
-    // Format: Tag.Monat. Stunde:Minute:Sekunde (z.B. 13.02. 16:21:05)
-    strftime(timeString, sizeof(timeString), "%d.%m. %H:%M:%S", &timeinfo);
-  } else {
-    // Fallback falls NTP (Internetzeit) noch nicht da ist
-    snprintf(timeString, sizeof(timeString), "%lus", millis() / 1000);
-  }
-
-  String fullEntry = "[" + String(timeString) + "] " + msg;
-  
-  Serial.println(fullEntry);
-  logBuffer[logIndex] = fullEntry;
-  logIndex = (logIndex + 1) % MAX_LOG_LINES;
-}
-
-
 #include "SumUpController.h" // SumUp Klasse muss im selben Ordner liegen
 
 // --- Custom Fonts ---
@@ -70,7 +38,7 @@ void logMessage(const String& msg) {
 // =================================================================
 //                      FIRMWARE VERSION
 // =================================================================
-const String FIRMWARE_VERSION = "V1.4.0-ec";
+const String FIRMWARE_VERSION = "V1.3.9-ec";
 
 // =================================================================
 //                      CONFIGURATION CONSTANTS
@@ -85,7 +53,7 @@ const int DEFAULT_MAX_SLOTS = 16;
 const int MAX_SLOTS = 16;
 
 // --- Timing and Timeout Values (in milliseconds) ---
-unsigned long COIN_PROCESSING_DELAY = 120;
+unsigned long COIN_PROCESSING_DELAY = 150;
 unsigned long BILL_ISR_DEBOUNCE_MS = 75;
 unsigned long BILL_GROUP_PROCESSING_TIMEOUT_MS = 1500;
 unsigned long DISPENSE_RELAY_ON_TIME = 5000;
@@ -239,14 +207,16 @@ volatile unsigned long billAcceptorPulseCount = 0;
 volatile unsigned long lastBillPulseEdgeTime = 0;
 volatile unsigned long lastBillDebounceEdgeTime = 0;
 
-float lastCreditSaved = 0.0;
-unsigned long lastCreditChangeTime = 0;
-const unsigned long NVS_SAVE_DELAY = 10000; // 10 Sekunden warten nach letztem Einwurf
 
 // --- Display Customization ---
 const int SLOGAN_MAX_LENGTH = 24; // Zeichenlimit für den Slogan
 String displaySlogan = "";
 String displayFooter = "www.hanimat.at";
+
+// --- Logging ---
+#define MAX_LOG_LINES 50
+String logBuffer[MAX_LOG_LINES];
+int logIndex = 0;
 
 // --- User Input State ---
 String keypadInputBuffer = "";
@@ -300,7 +270,6 @@ void checkOverallStockLevel();
 void sendHanimatStatusPing();
 void handleSumUpPaymentInitiation(); 
 void drawPageHeader(String title, uint16_t color = HANIMAT_HEADER);
-void saveCreditToNVS(bool force = false);
 // Neue Funktionen für Online Update
 void handleCheckOnlineUpdate();
 void handleStartOnlineUpdate();
@@ -341,6 +310,7 @@ void displayErrorMessage(const String &line1, const String &line2 = "");
 void playThankYouMelody();
 void playErrorSound();
 void playKeyPressBeep();
+void logMessage(const String& msg);
 bool checkRelayBoardOnline();
 void sendTelegramMessage(String message);
 
@@ -351,6 +321,16 @@ void IRAM_ATTR billAcceptorISR();
 // =================================================================
 //                      HELPER FUNCTIONS
 // =================================================================
+
+/**
+ * @brief Logs a message to the Serial port and a circular buffer for the web UI.
+ * @param msg The message string to log.
+ */
+void logMessage(const String& msg) {
+  Serial.println(msg);
+  logBuffer[logIndex] = "[" + String(millis() / 1000) + "s] " + msg;
+  logIndex = (logIndex + 1) % MAX_LOG_LINES;
+}
 
 /**
  * @brief Standard UI Helper: Draws the Header Bar with Wifi Status
@@ -491,21 +471,6 @@ void displayOTAMessageTFT(String line1, String line2, String line3, uint16_t col
   }
 }
 
-/**
- * @brief Sichert das aktuelle Guthaben im NVS, falls nötig.
- */
-void saveCreditToNVS(bool force) {
-    // Nur speichern, wenn sich der Wert geändert hat
-    if (credit != lastCreditSaved || force) {
-        preferences.begin("hanimat", false);
-        preferences.putFloat("credit", credit);
-        preferences.end();
-        
-        lastCreditSaved = credit;
-        logMessage("NVS: Guthaben gesichert: " + String(credit, 2) + " EUR");
-    }
-}
-
 // =================================================================
 //                      INTERRUPT SERVICE ROUTINES
 // =================================================================
@@ -514,13 +479,8 @@ void saveCreditToNVS(bool force) {
  * @brief ISR for the coin acceptor. Increments a pulse counter.
  */
 void IRAM_ATTR coinAcceptorISR() {
-  unsigned long now = millis();
-  // Nur zählen, wenn der letzte Puls mindestens 20ms her ist
-  // Das filtert "Prellen" bei FAST-Einstellung effektiv raus
-  if (now - lastCoinPulseTime > 20) { 
-    coinPulseCount++;
-    lastCoinPulseTime = now;
-  }
+  coinPulseCount++;
+  lastCoinPulseTime = millis();
 }
 
 /**
@@ -547,7 +507,7 @@ void setup() {
   logMessage("System starting: HANIMAT " + FIRMWARE_VERSION);
   bootTime = millis();
 
-  // --- Initialize I2C ---
+// --- Initialize I2C ---
   Wire.begin();
   Wire.setClock(50000L); // Set I2C clock to 50kHz for stability
   logMessage("I2C clock set to 50kHz.");
@@ -572,29 +532,29 @@ void setup() {
 
   logMessage("Relay board initialized (Fast Mode).");
 
-  // --- Pin-Modus festlegen ---
-  pinMode(WIFI_RESET_BUTTON, INPUT);  
-  delay(100); // Dem Pin Zeit geben, sich zu stabilisieren
+// --- Pin-Modus festlegen ---
+pinMode(WIFI_RESET_BUTTON, INPUT);  
+delay(100); // Dem Pin Zeit geben, sich zu stabilisieren
 
-  // --- Floating Pin Check ---
-  int lowCount = 0; 
-  int sampleCount = 500; 
-  for (int i = 0; i < sampleCount; i++) {
-    if (digitalRead(WIFI_RESET_BUTTON) == LOW) {
-      lowCount++;
-    }
-    delayMicroseconds(100);
+// --- Floating Pin Check ---
+int lowCount = 0; 
+int sampleCount = 500; 
+for (int i = 0; i < sampleCount; i++) {
+  if (digitalRead(WIFI_RESET_BUTTON) == LOW) {
+    lowCount++;
   }
+  delayMicroseconds(100);
+}
 
-  logMessage("Reset-Pin Check: " + String(lowCount) + " von " + String(sampleCount) + " Samples waren LOW.");
+logMessage("Reset-Pin Check: " + String(lowCount) + " von " + String(sampleCount) + " Samples waren LOW.");
 
-  if (lowCount > 5) {
-    resetPinIsFloating = true;
-    logMessage("WARNUNG: Reset-Pin floating! Button wird SOFTWARESEITIG DEAKTIVIERT.");
-  } else {
-    resetPinIsFloating = false;
-    logMessage("STATUS: Reset-Pin stabil erkannt.");
-  }
+if (lowCount > 5) {
+  resetPinIsFloating = true;
+  logMessage("WARNUNG: Reset-Pin floating! Button wird SOFTWARESEITIG DEAKTIVIERT.");
+} else {
+  resetPinIsFloating = false;
+  logMessage("STATUS: Reset-Pin stabil erkannt.");
+}
 
   // --- Initialize Telegram Client ---
   secured_client.setInsecure(); // Allow connections without certificate validation
@@ -613,6 +573,7 @@ void setup() {
   pinMode(BILL_INHIBIT_PIN, OUTPUT);
   digitalWrite(BILL_INHIBIT_PIN, HIGH); // Inhibit bill acceptor by default
 
+
   // --- Initialize Keypad Pins (Manual Scan Mode) ---
   for (int i = 0; i < KEYPAD_ROWS; i++) {
     pinMode(rowPins[i], OUTPUT);
@@ -625,35 +586,7 @@ void setup() {
 
   // --- Load Settings from Preferences ---
   preferences.begin("hanimat", false);
-
-  char kBuf[16]; // Statischer Buffer für NVS Keys (verhindert Heap-Fragmentierung)
-
-  // --- NEU: Einmalige Initialisierung, falls das System "leer" ist ---
-  if (!preferences.isKey("initialized")) {
-      logMessage("ERSTSTART: Erzeuge Standardwerte im NVS...");
-      
-      for (int i = 0; i < MAX_SLOTS; i++) {
-          // Preise initialisieren
-          snprintf(kBuf, sizeof(kBuf), "price%d", i);
-          preferences.putFloat(kBuf, 5.0f + (i * 0.1f));
-          
-          // Verfügbarkeit initialisieren
-          snprintf(kBuf, sizeof(kBuf), "avail%d", i);
-          preferences.putBool(kBuf, true);
-          
-          // Sperre initialisieren
-          snprintf(kBuf, sizeof(kBuf), "locked%d", i);
-          preferences.putBool(kBuf, false);
-      }
-      
-      preferences.putString("password", DEFAULT_PASSWORD);
-      preferences.putBool("initialized", true);
-      logMessage("Initialisierung abgeschlossen.");
-  }
-
   logMessage("Loading settings from Preferences...");
-  
-  // Zeit- und Systemwerte laden
   COIN_PROCESSING_DELAY = preferences.getULong("coinDelay", 150);
   BILL_ISR_DEBOUNCE_MS = preferences.getULong("billIsrDeb", 75);
   BILL_GROUP_PROCESSING_TIMEOUT_MS = preferences.getULong("billGrpTout", 1500);
@@ -671,36 +604,34 @@ void setup() {
   almostEmptyThreshold = preferences.getInt("tgAlmostThres", 5);
   bot.updateToken(telegramBotToken);
   
+  // SumUp Settings
   sumupEnabled = preferences.getBool("suEnabled", false);
   sumupApiKey = preferences.getString("suApiKey", "");
   sumupMerchantId = preferences.getString("suMid", "");
   sumupReaderId = preferences.getString("suRid", "");
   sumupTimeout = preferences.getULong("suTimeout", 60000);
 
+  // Controller mit geladenen Daten füttern
   sumUp = SumUpController(sumupApiKey, sumupMerchantId, sumupReaderId);
+
+  // ACHTUNG: GPIO 35 ist Input-Only. KEIN interner Pullup möglich. 
+  // Du brauchst einen externen Widerstand, wenn du hier INPUT liest.
   pinMode(SUMUP_BUTTON_PIN, INPUT); 
 
+  // Display-Texte laden
   displaySlogan = preferences.getString("dispSlogan", "");
   displayFooter = preferences.getString("dispFooter", "www.hanimat.at");
 
   activeSlots = preferences.getInt("activeSlots", DEFAULT_MAX_SLOTS);
   if (activeSlots <= 0 || activeSlots > MAX_SLOTS) activeSlots = DEFAULT_MAX_SLOTS;
 
-  // Fächer laden mit statischen Key-Namen und Fallback-Werten
   for (int i = 0; i < MAX_SLOTS; i++) {
-    snprintf(kBuf, sizeof(kBuf), "price%d", i);
-    slotPrices[i]    = preferences.getFloat(kBuf, 5.0f + (i * 0.1f));
-    
-    snprintf(kBuf, sizeof(kBuf), "avail%d", i);
-    slotAvailable[i] = preferences.getBool(kBuf, true);
-    
-    snprintf(kBuf, sizeof(kBuf), "locked%d", i);
-    slotLocked[i]    = preferences.getBool(kBuf, false);
+    slotPrices[i]    = preferences.getFloat(("price" + String(i)).c_str(), 5.0f + (i * 0.1f));
+    slotAvailable[i] = preferences.getBool(("avail" + String(i)).c_str(), true);
+    slotLocked[i]    = preferences.getBool(("locked" + String(i)).c_str(), false);
   }
-  
   credit = preferences.getFloat("credit", 0.0f);
   savedPassword = preferences.getString("password", DEFAULT_PASSWORD);
-  
   preferences.end();
   logMessage("Settings loaded.");
 
@@ -709,6 +640,7 @@ void setup() {
   tft.setRotation(1); // Landscape mode
   tft.fillScreen(HANIMAT_BG);
    
+  // Use custom font for startup screen
   tft.setFont(&Poppins_Black14pt7b);
   tft.setTextColor(HANIMAT_HEADER);
   int16_t x1, y1; uint16_t w, h;
@@ -794,10 +726,6 @@ void setup() {
       tft.println(line4);
     } else {
       logMessage("WiFi connected! IP: " + WiFi.localIP().toString());
-      configTime(0, 0, "pool.ntp.org");
-      setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1); 
-      logMessage("NTP Zeit-Synchronisierung gestartet...");
-      tzset();
       tft.fillScreen(HANIMAT_BG);
 
       tft.setFont(&Poppins_Black14pt7b);
@@ -921,11 +849,6 @@ void loop() {
     }
   }
 
-  // Guthaben verzögert speichern (Wear Leveling)
-  if (credit != lastCreditSaved && (millis() - lastCreditChangeTime > NVS_SAVE_DELAY)) {
-        saveCreditToNVS();
-    }
-
   // --- Main state machine ---
   if (currentSystemState != CurrentSystemState::OTA_UPDATE && !isSumUpTransactionActive) {
     // Timeout for user inactivity, resetting the screen to default
@@ -1000,31 +923,25 @@ void loop() {
             logMessage("SumUp Status Check: " + status); 
         }
 
-if (status == "SUCCESSFUL") {
+        if (status == "SUCCESSFUL") {
             logMessage(">>> SUMUP ZAHLUNG ERFOLGREICH! <<<");
             
-            // Logik für korrekte Verrechnung:
-            // Wir setzen das Guthaben auf den vollen Preis des Faches.
-            // Grund: scheduleDispense() zieht den Preis später wieder ab.
-            credit = slotPrices[selectedSlot]; 
-            
-            logMessage("SumUp: Zahlung abgeschlossen. Internes Guthaben angepasst auf: " + String(credit, 2) + " EUR");
+            // Gutschrift hinzufügen
+            credit += pendingSumUpAmount;
+            logMessage("SumUp: " + String(pendingSumUpAmount, 2) + " EUR gutgeschrieben.");
 
-            // Guthaben im Flash-Speicher sichern
+            // Speichern
             preferences.begin("hanimat", false);
             preferences.putFloat("credit", credit);
             preferences.end();
 
-            // SumUp Status zurücksetzen
-            isSumUpTransactionActive = false; // Stoppt das Polling
+            isSumUpTransactionActive = false; // Polling beenden
             currentSumUpTxId = "";
-            currentSystemState = CurrentSystemState::IDLE; // Zurück in den Standardmodus
             
-            // Warenausgabe starten
-            logMessage("Starte Warenausgabe fuer Fach " + String(selectedSlot + 1));
+            // HIER WARENAUSGABE STARTEN:
             scheduleDispense(selectedSlot);
             
-        }
+        } 
         else if (status == "FAILED" || status == "CANCELLED") {
             logMessage("SumUp: Zahlung fehlgeschlagen oder abgebrochen (" + status + ").");
             isSumUpTransactionActive = false; // Polling beenden
@@ -1475,24 +1392,17 @@ void processDispenseJob() {
       return;
     }
       
-    // 1. Guthaben abziehen
+    // Deduct credit and update slot availability
     credit -= slotPrices[dispenseJob.slot];
     if (credit < 0) credit = 0;
-    
-    // 2. Slot als leer markieren
     slotAvailable[dispenseJob.slot] = false;
     logMessage("Purchase complete for slot " + String(dispenseJob.slot + 1) + ". New credit: " + String(credit, 2));
 
-    // 3. Änderungen permanent im Flash speichern
-    // Wir nutzen einen statischen Buffer für den Key-Namen (z.B. "avail5")
-    char availKey[12];
-    snprintf(availKey, sizeof(availKey), "avail%d", dispenseJob.slot);
-
+    // Persist changes to Preferences
     preferences.begin("hanimat", false);
-    preferences.putBool(availKey, false); // NEU: Statischer Key statt dynamischem String
+    preferences.putFloat("credit", credit);
+    preferences.putBool(("avail" + String(dispenseJob.slot)).c_str(), slotAvailable[dispenseJob.slot]);
     preferences.end();
-    
-    saveCreditToNVS(true); // Sofortiges Speichern des Guthabens erzwingen (Wear-Leveling Logik)
     
     // Send notifications
     if (telegramNotifyOnSale) {
@@ -1535,48 +1445,34 @@ void processDispenseJob() {
  * @brief Processes coin pulses after a delay to group them into a single coin event.
  */
 void processAcceptedCoin() {
-  // Überprüfen, ob Pulse vorhanden sind und die Lücke zwischen den Münzen groß genug ist
   if (coinPulseCount > 0 && (millis() - lastCoinPulseTime > COIN_PROCESSING_DELAY)) {
-    
     int pulsesToProcess;
-    
-    // 1. KRITISCHE SEKTION: Wert sichern und Zähler SOFORT nullen
-    // Damit verpassen wir keine Pulse der nächsten Münze während der Logik unten.
     noInterrupts();
     pulsesToProcess = coinPulseCount;
-    coinPulseCount = 0; 
+    coinPulseCount = 0;
     interrupts();
 
-    logMessage("Münzprüfer: " + String(pulsesToProcess) + " Pulse erkannt.");
+    logMessage("Coin: Processing " + String(pulsesToProcess) + " pulses.");
 
-    // 2. MAPPING PRÜFEN (pulseValues Array)
     if (pulsesToProcess > 0 && pulsesToProcess < (sizeof(pulseValues) / sizeof(pulseValues[0]))) {
       int coinValueCents = pulseValues[pulsesToProcess];
-      
       if (coinValueCents > 0) {
-        // Guthaben im RAM erhöhen
         credit += (float)coinValueCents / 100.0;
+        logMessage("Coin accepted: " + String(pulsesToProcess) + " pulses -> " + String((float)coinValueCents / 100.0, 2) + " EUR. New credit: " + String(credit, 2) + " EUR");
         
-        // Timer für die verzögerte Flash-Speicherung (Wear-Leveling)
-        lastCreditChangeTime = millis(); 
+        preferences.begin("hanimat", false);
+        preferences.putFloat("credit", credit);
+        preferences.end();
 
-        logMessage("Guthaben aktualisiert: +" + String((float)coinValueCents / 100.0, 2) + " EUR");
-        
-        // Display-Update anfordern und System-Status setzen
         displayNeedsUpdate = true;
         lastUserInteractionTime = millis();
         currentSystemState = CurrentSystemState::USER_INTERACTION;
-        
-        // Akustisches Feedback (Piep auf 40ms verkürzt, um Zeit zu sparen)
-        ledcWriteTone(0, 1200); 
-        delay(40); 
-        ledcWriteTone(0, 0);
+        ledcWriteTone(0, 1200); delay(100); ledcWriteTone(0,0);
       } else {
-        logMessage("Münz-Fehler: Wert für " + String(pulsesToProcess) + " Pulse ist 0.");
+        logMessage("Coin: " + String(pulsesToProcess) + " pulses has a value of 0 (invalid pulse count).");
       }
     } else {
-      // Hilft beim Debugging: Zeigt an, wie viele Pulse bei Fehlern wirklich ankamen
-      logMessage("Coin Fehler: " + String(pulsesToProcess) + " Pulse passen zu keinem Mapping.");
+      logMessage("Coin: Invalid pulse count rejected: " + String(pulsesToProcess));
     }
   }
 }
@@ -1609,7 +1505,9 @@ void processBillAcceptorPulses() {
         credit += billValueEuros;
         logMessage("Bill accepted: " + String(pulsesToProcess) + " pulses -> " + String(billValueEuros) + " EUR. New credit: " + String(credit, 2) + " EUR");
         
-        lastCreditChangeTime = millis();
+        preferences.begin("hanimat", false);
+        preferences.putFloat("credit", credit);
+        preferences.end();
 
         displayNeedsUpdate = true;
         lastUserInteractionTime = millis();
@@ -1913,33 +1811,19 @@ server.on("/pairsumup", HTTP_POST, []() {
 
 server.on("/disconnectsumup", HTTP_POST, []() {
   if (!isAuthenticated) return;
-  
-  logMessage("Web: Trenne SumUp Terminal...");
-  
-  // 1. Versuche API Unpair
-  bool apiSuccess = sumUp.unpairReader();
-  
-  // 2. Lokal speichern (leeren String), egal ob API erfolgreich war oder nicht
-  // (damit man bei API-Fehlern nicht "feststeckt")
   sumupReaderId = "";
   preferences.begin("hanimat", false);
   preferences.putString("suRid", "");
   preferences.end();
-  
-  // Controller ID sicherheitshalber nochmal nullen (macht die Funktion oben zwar auch, aber sicher ist sicher)
   sumUp.setReaderId("");
-
-  if(apiSuccess) {
-      logMessage("Web: SumUp Reader erfolgreich entkoppelt.");
-      server.send(200, "text/html", "Erfolg! Terminal entkoppelt. <meta http-equiv='refresh' content='2;url=/' />");
-  } else {
-      logMessage("Web: SumUp Reader lokal entfernt (API Fehler oder offline).");
-      server.send(200, "text/html", "Lokal entfernt (API Warnung). <meta http-equiv='refresh' content='2;url=/' />");
-  }
+  logMessage("Web: SumUp Reader ID gelöscht (getrennt).");
+  server.sendHeader("Location", "/#sumup-config", true);
+  server.send(302);
 });
-server.begin();
+  server.begin();
   logMessage("Web server started.");
 }
+
 
 // =================================================================
 //                      WEB SERVER HANDLERS
@@ -2405,37 +2289,26 @@ void handleTelegramConfigPage() { server.sendHeader("Location", "/#telegram-conf
  */
 void showLoginPage() {
   String html = R"HTML(
-<!DOCTYPE html><html lang='de'><head><title>Login | HANIMAT</title>
-<meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no'>
+<!DOCTYPE html><html><head><title>Login | HANIMAT</title><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0'>
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap');
-:root { --brand: #FF9F1C; --bg: #0F1115; --panel: #181A20; --text: #FFFFFF; --border: #2A2D35; }
-body { height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; box-sizing: border-box; }
-.login-wrap { width: 100%; max-width: 340px; text-align: center; }
-.logo-area { margin-bottom: 2.5rem; }
-.brand-name { font-size: 2.8rem; font-weight: 800; color: var(--text); letter-spacing: -1px; margin: 0; line-height: 1; }
-.brand-name span { color: var(--brand); }
-.brand-sub { font-size: 0.9rem; color: #666; font-weight: 500; margin-top: 5px; letter-spacing: 0.5px; }
-.card { background: var(--panel); padding: 2.5rem; border-radius: 20px; border: 1px solid var(--border); box-shadow: 0 20px 40px rgba(0,0,0,0.4); }
-input { width: 100%; padding: 1.1rem; margin-bottom: 1.5rem; background: #08090B; border: 1px solid var(--border); border-radius: 12px; color: white; font-size: 1.1rem; text-align: center; outline: none; transition: 0.2s; box-sizing: border-box; }
-input:focus { border-color: var(--brand); box-shadow: 0 0 0 3px rgba(255, 159, 28, 0.15); }
-button { width: 100%; padding: 1.1rem; background: var(--brand); color: #000; border: none; border-radius: 12px; font-size: 1.1rem; font-weight: 700; cursor: pointer; transition: 0.2s; }
-button:hover { transform: translateY(-2px); box-shadow: 0 10px 20px rgba(255, 159, 28, 0.2); }
-.copy { margin-top: 2rem; font-size: 0.75rem; color: #444; }
-.copy a { color: #555; text-decoration: none; }
+:root { --primary: #FFA500; --primary-hover: #FF8C00; --background: #1E1E1E; --text: #E0E0E0; --card-bg: #2D2D2D; }
+body { min-height: 100vh; display: grid; place-items: center; font-family: 'Inter', system-ui, sans-serif; background: var(--background); color: var(--text); }
+.login-container { width: 90%; max-width: 400px; padding: 2rem; background: var(--card-bg); border-radius: 1.5rem; box-shadow: 0 8px 32px rgba(0,0,0,0.3); display: flex; flex-direction: column; align-items: center; }
+.logo { margin-bottom: 1rem; font-size: 2rem; font-weight: 700; color: var(--primary); text-align: center; }
+h1 { color: var(--primary); font-size: 1.875rem; margin-bottom: 1.5rem; text-align: center; }
+form { width: 100%; display: flex; flex-direction: column; align-items: center; }
+input { width: 100%; padding: 0.875rem; border: 2px solid #444; border-radius: 0.75rem; font-size: 1rem; background: #1E1E1E; color: var(--text); transition: border-color 0.2s; box-sizing: border-box; }
+input:focus { outline: none; border-color: var(--primary); }
+button { width: 100%; padding: 1rem; background: var(--primary); color: white; border: none; border-radius: 0.75rem; font-size: 1rem; font-weight: 600; cursor: pointer; transition: background 0.2s; margin-top: 1.5rem; box-sizing: border-box;}
+button:hover { background: var(--primary-hover); }
 </style></head><body>
-<div class='login-wrap'>
-  <div class='logo-area'>
-    <h1 class='brand-name'>HANI<span>MAT</span></h1>
-    <div class='brand-sub'>Thomas Schöpf</div>
-  </div>
-  <div class='card'>
-    <form action='/login' method='post'>
-      <input type='password' name='password' placeholder='Passwort' required autofocus>
-      <button type='submit'>Anmelden</button>
-    </form>
-  </div>
-  <div class='copy'>&copy; 2026 Hanimat Systems<br><a href='https://www.hanimat.at'>www.hanimat.at</a></div>
+<div class='login-container'>
+  <div class='logo'>HANIMAT</div>
+  <h1>Admin Login</h1>
+  <form action='/login' method='post'>
+    <input type='password' id='password' name='password' placeholder='Passwort' required>
+    <button type='submit'>Anmelden</button>
+  </form>
 </div>
 </body></html>
 )HTML";
@@ -2447,515 +2320,265 @@ button:hover { transform: translateY(-2px); box-shadow: 0 10px 20px rgba(255, 15
  */
 void showDashboard() {
   String html = R"HTML(
-<!DOCTYPE html><html lang='de'><head><title>Hanimat Control</title>
-<meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no'>
+<!DOCTYPE html><html lang='de'><head><title>Admin Panel | HANIMAT</title><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0'>
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-
-/* --- DESIGN SYSTEM --- */
-:root { 
-    --brand: #FF9F1C; 
-    --brand-glow: rgba(255, 159, 28, 0.2);
-    --bg-body: #0F1115;
-    --bg-sidebar: #15171C;
-    --bg-card: #1C1F26;
-    --bg-input: #121418;
-    --border: #2D3139;
-    --text-main: #FFFFFF;
-    --text-sec: #9CA3AF;
-    --success: #2ECC71;
-    --danger: #E74C3C;
-    --locked: #F39C12;
-}
-
-* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-body { margin: 0; padding: 0; font-family: 'Inter', sans-serif; background: var(--bg-body); color: var(--text-main); display: flex; height: 100vh; overflow: hidden; }
-
-/* --- NAVIGATION --- */
-.sidebar { width: 260px; background: var(--bg-sidebar); border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; transition: transform 0.3s ease; z-index: 100; }
-.brand-header { padding: 2rem 1.5rem; }
-.logo { font-size: 1.8rem; font-weight: 800; color: white; letter-spacing: -0.5px; margin: 0; }
-.logo span { color: var(--brand); }
-.logo-sub { font-size: 0.8rem; color: #666; margin-top: 4px; font-weight: 500; }
-
-.nav-list { list-style: none; padding: 0 1rem; margin: 0; overflow-y: auto; flex: 1; }
-.nav-btn { display: flex; align-items: center; width: 100%; padding: 0.9rem 1rem; margin-bottom: 0.4rem; background: transparent; border: none; border-radius: 10px; color: var(--text-sec); font-family: inherit; font-size: 0.95rem; font-weight: 500; cursor: pointer; text-align: left; transition: 0.2s; }
-.nav-btn:hover { background: rgba(255,255,255,0.03); color: white; }
-.nav-btn.active { background: var(--brand); color: #000; font-weight: 600; box-shadow: 0 4px 12px var(--brand-glow); }
-.nav-icon { width: 20px; margin-right: 12px; text-align: center; }
-
-.footer-info { padding: 1.5rem; font-size: 0.75rem; color: #444; text-align: center; border-top: 1px solid var(--border); }
-
-/* --- MAIN CONTENT AREA --- */
-.main { flex: 1; overflow-y: auto; padding: 2rem; position: relative; }
-.top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; }
-h1 { font-size: 1.8rem; font-weight: 700; margin: 0; color: white; }
-h2 { font-size: 1.1rem; color: var(--text-sec); font-weight: 600; margin: 2rem 0 1rem 0; text-transform: uppercase; letter-spacing: 0.5px; }
-
-/* --- ACTION GRIDS (DASHBOARD) --- */
-.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 2rem; }
-.stat-box { background: var(--bg-card); padding: 1.5rem; border-radius: 16px; border: 1px solid var(--border); display: flex; flex-direction: column; }
-.stat-val { font-size: 2rem; font-weight: 700; color: white; margin-bottom: 0.3rem; }
-.stat-lbl { font-size: 0.85rem; color: var(--text-sec); }
-.stat-highlight { color: var(--brand); }
-
-/* --- SLOT TILES (THE NEW DESIGN) --- */
-.slots-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 1rem; }
-.slot-card { background: var(--bg-card); border-radius: 16px; padding: 1.2rem; border: 1px solid var(--border); position: relative; transition: transform 0.2s; display: flex; flex-direction: column; }
-.slot-card:hover { border-color: #444; transform: translateY(-2px); }
-
-.slot-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem; }
-.slot-title { font-weight: 700; font-size: 1.1rem; color: white; }
-.slot-price { font-size: 0.9rem; color: var(--text-sec); margin-top: 2px; }
-
-.badge { font-size: 0.7rem; font-weight: 700; padding: 4px 8px; border-radius: 6px; text-transform: uppercase; }
-.b-ok { background: rgba(46, 204, 113, 0.15); color: var(--success); }
-.b-empty { background: rgba(255, 255, 255, 0.1); color: #777; }
-.b-lock { background: rgba(231, 76, 60, 0.15); color: var(--danger); }
-
-.slot-controls { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: auto; }
-.icon-btn { background: #252830; border: none; border-radius: 8px; padding: 10px 0; color: #ccc; cursor: pointer; transition: 0.2s; font-size: 1.1rem; display: flex; align-items: center; justify-content: center; }
-.icon-btn:hover { background: #333; color: white; }
-.btn-refill:hover { color: var(--brand); background: rgba(255, 159, 28, 0.1); }
-.btn-test:hover { color: #3498db; background: rgba(52, 152, 219, 0.1); }
-
-/* --- FORMS --- */
-.input-group { margin-bottom: 1.2rem; }
-.input-group label { display: block; color: var(--text-sec); font-size: 0.85rem; margin-bottom: 0.5rem; }
-input, select { width: 100%; background: var(--bg-input); border: 1px solid var(--border); color: white; padding: 0.9rem; border-radius: 10px; font-size: 1rem; outline: none; transition: 0.2s; box-sizing: border-box; }
-input:focus { border-color: var(--brand); }
-
-.btn-main { width: 100%; background: var(--brand); color: #000; border: none; padding: 0.9rem; border-radius: 10px; font-weight: 700; cursor: pointer; margin-top: 0.5rem; }
-.btn-main:hover { opacity: 0.9; }
-.btn-sec { width: 100%; background: transparent; border: 1px solid var(--border); color: var(--text-sec); padding: 0.9rem; border-radius: 10px; cursor: pointer; font-weight: 600; }
-.btn-sec:hover { border-color: #666; color: white; }
-
-.quick-actions { display: flex; gap: 1rem; background: var(--bg-card); padding: 1.5rem; border-radius: 16px; border: 1px solid var(--border); flex-wrap: wrap; margin-bottom: 2rem; align-items: flex-end; }
-
-/* --- MOBILE OPTIMIZATION --- */
+:root { --primary: #FFA500; --primary-hover: #FF8C00; --background: #121212; --text: #E0E0E0; --card-bg: #1E1E1E; --sidebar-bg: #1A1A1A; --sidebar-width: 260px; --border-color: #333; --input-bg: #2C2C2C; --success: #4CAF50; --error: #F44336; --info: #2196F3;}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Inter', system-ui, sans-serif; background: var(--background); color: var(--text); display: flex; min-height: 100vh; font-size: 14px; }
+.sidebar { width: var(--sidebar-width); background: var(--sidebar-bg); padding: 1.5rem 1rem; border-right: 1px solid var(--border-color); position: fixed; height: 100vh; overflow-y: auto; transition: transform 0.3s ease; z-index: 1000;}
+.main-content { flex: 1; margin-left: var(--sidebar-width); padding: 1.5rem; transition: margin-left 0.3s ease; }
+.logo { font-size: 1.8rem; font-weight: 700; color: var(--primary); margin-bottom: 2rem; text-align: center; }
+.nav-menu { list-style: none; }
+.nav-item { margin-bottom: 0.5rem; }
+.nav-link { display: flex; align-items: center; gap: 0.8rem; padding: 0.8rem 1rem; border-radius: 0.5rem; color: #ccc; text-decoration: none; transition: all 0.2s ease; font-weight: 500; }
+.nav-link:hover, .nav-link.active { background: var(--primary); color: var(--background); }
+.card { background: var(--card-bg); border-radius: 1rem; padding: 1.5rem; box-shadow: 0 6px 12px rgba(0,0,0,0.3); margin-bottom: 1.5rem; }
+h1, h2 { color: var(--primary); margin-bottom: 1rem; font-weight: 600; } h1 { font-size: 1.8rem; } h2 { font-size: 1.5rem; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1.5rem; }
+.stat-card { background: var(--input-bg); padding: 1.5rem; border-radius: 0.75rem; text-align: center; }
+.stat-label { font-size: 0.9rem; color: #aaa; margin-bottom: 0.5rem; }
+.stat-value { font-size: 2rem; font-weight: 700; color: var(--primary); }
+table { width: 100%; border-collapse: collapse; background: var(--card-bg); border-radius: 0.75rem; overflow: hidden; }
+th, td { padding: 0.9rem 1rem; text-align: left; border-bottom: 1px solid var(--border-color); }
+th { background: var(--input-bg); font-weight: 600; }
+tr:hover { background: #252525; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; padding: 0.7rem 1.2rem; border-radius: 0.5rem; text-decoration: none; transition: all 0.2s ease; border: none; cursor: pointer; font-weight: 500; white-space: nowrap;}
+.btn-primary { background: var(--primary); color: var(--background); } .btn-primary:hover { background: var(--primary-hover); }
+.btn-secondary { background: var(--input-bg); color: var(--text); border: 1px solid var(--border-color); } .btn-secondary:hover { background: #383838; }
+.btn-danger { background: var(--error); color: white; } .btn-danger:hover { background: #D32F2F; }
+.btn-icon { padding: 0.6rem; background: transparent; border: 1px solid var(--border-color); color: #ccc; } .btn-icon:hover { background: var(--input-bg); color: var(--primary); }
+.badge { padding: 0.3rem 0.6rem; border-radius: 0.3rem; font-size: 0.8rem; font-weight: 500; }
+.locked-badge { background: var(--error); color: white; } .available-badge { background: #64B5F6; color: white; } .empty-badge { background: #757575; color: white; } .success-badge { background: var(--success); color: white; }
+input[type='text'], input[type='number'], input[type='password'], select { width: 100%; padding: 0.8rem; border: 1px solid var(--border-color); border-radius: 0.5rem; font-size: 0.9rem; background: var(--input-bg); color: var(--text); }
+.form-group { margin-bottom: 1.2rem; } .form-group label { display: block; margin-bottom: 0.4rem; font-weight: 500; }
+.form-inline { display: flex; gap: 0.8rem; align-items: flex-end; } .form-inline input, .form-inline select { flex: 1; }
+#log-console { background: #000; color: #0F0; padding: 1rem; height: 250px; overflow-y: auto; border-radius: 0.5rem; font-family: 'Courier New', monospace; white-space: pre-wrap; }
 .mobile-header { display: none; }
-.overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 90; backdrop-filter: blur(4px); }
-
+.sidebar-footer { margin-top: auto; padding-top: 1rem; border-top: 1px solid var(--border-color); font-size: 0.8rem; color: #888; text-align: center;}
+.status-message { padding: 1rem; border-radius: 0.5rem; margin-top: 1rem; text-align: center; font-weight: 500;}
+.status-success { background-color: var(--success); color: white;} .status-error { background-color: var(--error); color: white;} .status-info { background-color: var(--info); color: white;}
+.checkbox-label { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; } .checkbox-label input { width: auto; }
 @media (max-width: 768px) {
-  body { flex-direction: column; overflow: auto; }
-  .sidebar { position: fixed; height: 100%; left: -280px; top: 0; }
-  .sidebar.open { transform: translateX(280px); }
-  .overlay.open { display: block; }
-  
-  .mobile-header { display: flex; align-items: center; justify-content: space-between; padding: 0 1.5rem; height: 70px; background: rgba(15,17,21,0.95); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 80; backdrop-filter: blur(10px); }
-  .menu-toggle { font-size: 1.5rem; background: none; border: none; color: white; padding: 5px; }
-  
-  .main { padding: 1.5rem; height: auto; overflow: visible; }
-  .top-bar { display: none; } /* Hide desktop title on mobile */
-  
-  .quick-actions { flex-direction: column; align-items: stretch; }
-  .slots-grid { grid-template-columns: 1fr; } /* 1 Column on Mobile */
-  .slot-card { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 1rem; }
-  .slot-controls { display: flex; margin-top: 0; grid-column: 1 / -1; margin-top: 1rem; }
-  .slot-controls button { flex: 1; }
-  .slot-header { margin-bottom: 0; flex-direction: column; }
+  .sidebar { transform: translateX(-100%); width: 80%; max-width: 300px; }
+  .sidebar.active { transform: translateX(0); }
+  .main-content { margin-left: 0; padding-top: 5rem; }
+  .mobile-header { display: flex; justify-content: space-between; align-items: center; position: fixed; top: 0; left: 0; width: 100%; background: var(--sidebar-bg); padding: 0.8rem 1rem; z-index: 1002; }
+  .menu-toggle { background: none; border: none; color: var(--primary); font-size: 1.8rem; cursor: pointer; }
+  .form-inline { flex-direction: column; align-items: stretch; }
+  table { display: block; overflow-x: auto; white-space: nowrap; }
 }
-
-/* Utilities */
-.check-row { display: flex; align-items: center; gap: 10px; padding: 10px; background: rgba(255,255,255,0.02); border-radius: 8px; margin-bottom: 0.5rem; cursor: pointer; }
-.check-row input { width: auto; }
-#log-output{background:#000;color:#0f0;font-family:monospace;padding:1rem;height:350px;overflow-y:auto;border-radius:8px;font-size:0.8rem;border:1px solid #333;white-space:pre-wrap;word-wrap:break-word;}
 </style></head><body>
-
-<!-- Mobile UI -->
-<div class='overlay' onclick='toggleMenu()'></div>
-<div class='mobile-header'>
-  <div class='logo' style='font-size:1.4rem'>HANI<span>MAT</span></div>
-  <button class='menu-toggle' onclick='toggleMenu()'>&#9776;</button>
-</div>
-
-<!-- Sidebar -->
-<nav class='sidebar'>
-  <div class='brand-header'>
-    <div class='logo'>HANI<span>MAT</span></div>
-    <div class='logo-sub'>Thomas Schöpf</div>
-  </div>
-  <ul class='nav-list'>
-    <li><button class='nav-btn active' onclick='go("dashboard")'><span class='nav-icon'>&#128202;</span> Dashboard</button></li>
-    <li><button class='nav-btn' onclick='go("slots-config")'><span class='nav-icon'>&#9881;</span> Slot Config</button></li>
-    <li><button class='nav-btn' onclick='go("display-config")'><span class='nav-icon'>&#128187;</span> Anzeige</button></li>
-    <li><button class='nav-btn' onclick='go("timing-config")'><span class='nav-icon'>&#9201;</span> Zeitsteuerung</button></li>
-    <li><button class='nav-btn' onclick='go("telegram-config")'><span class='nav-icon'>&#9993;</span> Telegram</button></li>
-    <li><button class='nav-btn' onclick='go("sumup-config")'><span class='nav-icon'>&#128179;</span> SumUp</button></li>
-    <li><button class='nav-btn' onclick='go("network-config")'><span class='nav-icon'>&#128423;</span> Netzwerk</button></li>
-    <li><button class='nav-btn' onclick='go("password-config")'><span class='nav-icon'>&#128274;</span> Sicherheit</button></li>
-    <li><button class='nav-btn' onclick='go("logs")'><span class='nav-icon'>&#128466;</span> Logs</button></li>
-    <li><button class='nav-btn' onclick='go("ota-update-section")'><span class='nav-icon'>&#128229;</span> Update</button></li>
+<div class='mobile-header'><div class='logo'>HANIMAT</div><button class='menu-toggle' onclick='toggleSidebar()'>&#9776;</button></div>
+<aside class='sidebar'>
+  <div class='logo'>HANIMAT</div>
+  <ul class='nav-menu'>
+    <li class='nav-item'><a href='javascript:void(0)' class='nav-link active' onclick='showSection("dashboard")'>Dashboard</a></li>
+    <li class='nav-item'><a href='javascript:void(0)' class='nav-link' onclick='showSection("slots-config")'>Slotkonfiguration</a></li>
+    <li class='nav-item'><a href='javascript:void(0)' class='nav-link' onclick='showSection("display-config")'>Anzeige</a></li>
+    <li class='nav-item'><a href='javascript:void(0)' class='nav-link' onclick='showSection("timing-config")'>Zeiteinstellungen</a></li>
+    <li class='nav-item'><a href='javascript:void(0)' class='nav-link' onclick='showSection("telegram-config")'>Benachrichtigungen</a></li>
+    <li class='nav-item'><a href='javascript:void(0)' class='nav-link' onclick='showSection("sumup-config")'>SumUp Terminal</a></li>
+    <li class='nav-item'><a href='javascript:void(0)' class='nav-link' onclick='showSection("network-config")'>Netzwerk</a></li>
+    <li class='nav-item'><a href='javascript:void(0)' class='nav-link' onclick='showSection("password-config")'>Passwort</a></li>
+    <li class='nav-item'><a href='javascript:void(0)' class='nav-link' onclick='showSection("logs")'>Logs</a></li>
+    <li class='nav-item'><a href='javascript:void(0)' class='nav-link' onclick='showSection("ota-update-section")'>System Update</a></li>
   </ul>
-<div class='footer-info'>
-    FW )HTML"; html += FIRMWARE_VERSION; html += R"HTML(<br>
-    Hanimat<br>
-    <a href='https://www.hanimat.at' target='_blank' style='color:#666; text-decoration:none;'>www.hanimat.at</a>
-  </div>
-</nav>
-
-<!-- Content -->
-<div class='main'>
-
-  <!-- DASHBOARD -->
-  <section id='dashboard' class='page'>
-    <div class='top-bar'><h1>Dashboard</h1></div>
-
-    <div class='stats-grid'>
-      <div class='stat-box'>
-        <div class='stat-val stat-highlight'>)HTML"; html += String(credit, 2) + R"HTML( &euro;</div>
-        <div class='stat-lbl'>Aktuelles Guthaben</div>
+  <div class='sidebar-footer'>Version: 
+)HTML";
+  html += FIRMWARE_VERSION;
+  html += R"HTML(<br><a href='http://www.hanimat.at' target='_blank'>www.hanimat.at</a></div></aside>
+<main class='main-content'>
+  <!-- Dashboard Section -->
+  <section id='dashboard' class='content-section'><h1>Dashboard</h1><div class='grid'>
+    <div class='stat-card'><div class='stat-label'>Verfügbare Fächer</div><div class='stat-value'>)HTML";
+  html += String(countAvailableSlots()) + "/" + String(activeSlots) + "</div></div>";
+  html += "<div class='stat-card'><div class='stat-label'>Aktuelles Guthaben</div><div class='stat-value'>" + String(credit, 2) + " &euro;</div></div>";
+  html += "<div class='stat-card'><div class='stat-label'>System Uptime</div><div class='stat-value'>" + String(millis()/60000) + " min</div></div></div>";
+  html += R"HTML(
+    <div class='card' style='margin-top: 1.5rem;'><h2>Schnellaktionen</h2>
+      <div class='form-inline' style='margin-bottom: 1.5rem;'>
+        <form action='/addcredit' method='post' class='form-inline' style='flex-grow: 1;'><div class='form-group' style='margin-bottom:0; flex-grow: 1;'><label for='addAmount'>Guthaben +/-</label><input type='number' step='0.01' id='addAmount' name='amount' placeholder='Betrag' required></div><button type='submit' class='btn btn-primary'>OK</button></form>
+        <form action='/resetcredit' method='post'><button type='submit' class='btn btn-danger'>Guthaben Reset</button></form>
       </div>
-      <div class='stat-box'>
-        <div class='stat-val'>)HTML"; html += String(countAvailableSlots()) + "/" + String(activeSlots) + R"HTML(</div>
-        <div class='stat-lbl'>Verfügbare Fächer</div>
-      </div>
-      <div class='stat-box'>
-        <div class='stat-val'>)HTML"; html += String(millis()/60000) + R"HTML( min</div>
-        <div class='stat-lbl'>System Laufzeit</div>
-      </div>
+      <div class='form-inline' style='gap:1rem;'><form action='/refillall' method='post' style='flex:1;'><button type='submit' class='btn btn-secondary' style='width:100%;'>Alle Fächer auffüllen</button></form><form action='/triggerallrelays' method='post' style='flex:1;'><button type='submit' class='btn btn-secondary' style='width:100%;'>Alle Relais testen</button></form></div>
     </div>
-
-    <!-- Quick Actions Bar -->
-    <div class='quick-actions'>
-      <form action='/addcredit' method='post' style='flex:1; min-width:200px;'>
-        <label style='font-size:0.8rem; color:#888; margin-bottom:4px; display:block;'>Guthaben simulieren</label>
-        <div style='display:flex; gap:10px;'>
-          <input type='number' step='0.01' name='amount' placeholder='Betrag' required style='margin:0;'>
-          <button type='submit' class='btn-main' style='width:auto; margin:0;'>Go</button>
-        </div>
-      </form>
-      <form action='/resetcredit' method='post'>
-        <button type='submit' class='btn-sec' style='border-color:var(--danger); color:var(--danger);'>Reset &euro;</button>
-      </form>
-      <div style='width:1px; height:40px; background:var(--border); margin:0 10px; display:none;'></div> <!-- Seperator optional -->
-      <form action='/refillall' method='post' style='flex:1;'>
-         <button type='submit' class='btn-sec'>Alle Auffüllen</button>
-      </form>
-      <form action='/triggerallrelays' method='post' style='flex:1;'>
-         <button type='submit' class='btn-sec'>Relais Test</button>
-      </form>
-    </div>
-
-    <h2>Fach Status & Steuerung</h2>
-    <div class='slots-grid'>
+    <h2>Fachübersicht</h2><table><thead><tr><th>Fach</th><th>Status</th><th>Preis (&euro;)</th><th>Aktionen</th></tr></thead><tbody>
 )HTML";
   for (int i = 0; i < activeSlots; i++) {
-    String badgeClass = "b-ok";
-    String statusText = "Bereit";
-    String lockIcon = "&#128275;"; // open lock
-    
-    if (slotLocked[i]) { 
-        statusText = "Gesperrt"; 
-        badgeClass = "b-lock"; 
-        lockIcon = "&#128274;"; // closed lock
-    } else if (!slotAvailable[i]) { 
-        statusText = "Leer"; 
-        badgeClass = "b-empty"; 
-    }
-
-    html += "<div class='slot-card'>";
-    // Header Part
-    html += "<div class='slot-header'>";
-    html += "<div><div class='slot-title'>Fach #" + String(i+1) + "</div><div class='slot-price'>" + String(slotPrices[i], 2) + " &euro;</div></div>";
-    html += "<span class='badge " + badgeClass + "'>" + statusText + "</span>";
-    html += "</div>"; // end header
-
-    // Controls Part
-    html += "<div class='slot-controls'>";
-    
-    // Lock Button
-    html += "<form action='/toggleslotlock' method='post' style='display:contents;'><input type='hidden' name='slot' value='" + String(i) + "'>";
-    html += "<button type='submit' class='icon-btn' title='Sperren/Entsperren'>" + lockIcon + "</button></form>";
-
-    // Test Button
-    html += "<form action='/triggerrelay' method='post' style='display:contents;'><input type='hidden' name='slot' value='" + String(i) + "'>";
-    html += "<button type='submit' class='icon-btn btn-test' title='Relais Test'>&#9889;</button></form>";
-
-    // Refill Button
-    html += "<form action='/refill' method='post' style='display:contents;'><input type='hidden' name='slot' value='" + String(i) + "'>";
-    html += "<button type='submit' class='icon-btn btn-refill' title='Auffüllen'>&#128260;</button></form>";
-    
-    html += "</div></div>"; // end card
+    String statusText, statusClass;
+    if (slotLocked[i]) { statusText = "Gesperrt"; statusClass = "locked-badge"; }
+    else if (!slotAvailable[i]) { statusText = "Leer"; statusClass = "empty-badge"; }
+    else { statusText = "Verfügbar"; statusClass = "success-badge"; }
+    html += "<tr><td>#" + String(i+1) + "</td><td><span class='badge " + statusClass + "'>" + statusText + "</span></td><td>" + String(slotPrices[i], 2) + "</td><td><div class='form-inline' style='gap:0.3rem;'>";
+    html += "<form action='/toggleslotlock' method='post'><input type='hidden' name='slot' value='" + String(i) + "'><button type='submit' class='btn btn-icon' title='" + (slotLocked[i] ? "Entsperren" : "Sperren") + "'>" + (slotLocked[i] ? "&#128274;" : "&#128275;") + "</button></form>";
+    html += "<form action='/triggerrelay' method='post'><input type='hidden' name='slot' value='" + String(i) + "'><button type='submit' class='btn btn-icon' title='Test Relais'>&#9889;</button></form>";
+    html += "<form action='/refill' method='post'><input type='hidden' name='slot' value='" + String(i) + "'><button type='submit' class='btn btn-icon' title='Auffüllen'>&#128260;</button></form></div></td></tr>";
   }
-  html += R"HTML(
-    </div>
-  </section>
+  html += "</tbody></table></section>";
 
-  <!-- CONFIG SLOTS -->
-  <section id='slots-config' class='page' style='display:none;'>
-    <div class='top-bar'><h1>Slot Konfiguration</h1></div>
-    <div class='stat-box' style='max-width:500px; margin-bottom:2rem;'>
-       <form action='/updateslots' method='post'>
-         <div class='input-group'>
-           <label>Anzahl aktiver Fächer (Max )HTML"; html += String(MAX_SLOTS) + R"HTML()</label>
-           <input type='number' name='maxSlots' value=')HTML" + String(activeSlots) + R"HTML(' min='1' max=')HTML" + String(MAX_SLOTS) + R"HTML(' required>
-         </div>
-         <button type='submit' class='btn-main'>Anzahl Speichern</button>
-       </form>
-    </div>
-    
-    <h2>Preise Einstellen</h2>
-    <div class='slots-grid'>
+  html += R"HTML(
+  <!-- Slots Config Section -->
+  <section id='slots-config' class='content-section' style='display:none;'><h1>Slotkonfiguration</h1>
+    <div class='card'><form action='/updateslots' method='post'><div class='form-group'><label for='maxSlotsInput'>Anzahl aktiver Fächer (1-)HTML";
+  html += String(MAX_SLOTS) + R"HTML(:</label><input type='number' id='maxSlotsInput' name='maxSlots' value=')HTML" + String(activeSlots) + R"HTML(' min='1' max=')HTML" + String(MAX_SLOTS) + R"HTML(' required></div><button type='submit' class='btn btn-primary'>Speichern</button></form></div>
+    <h2>Preise anpassen</h2><div class='grid'>
 )HTML";
   for (int i = 0; i < activeSlots; i++) {
-     html += "<div class='slot-card'><form action='/updateprice' method='post'>";
-     html += "<div class='slot-title' style='margin-bottom:10px;'>Fach #" + String(i+1) + "</div>";
-     html += "<input type='hidden' name='slot' value='" + String(i) + "'>";
-     html += "<div class='input-group'><input type='number' step='0.01' name='price' value='" + String(slotPrices[i],2) + "'></div>";
-     html += "<button type='submit' class='btn-sec'>Speichern</button>";
-     html += "</form></div>";
+    html += "<div class='card'><form action='/updateprice' method='post'><div class='form-group'><label for='price" + String(i) + "'>Fach #" + String(i+1) + " Preis (&euro;)</label><input type='hidden' name='slot' value='" + String(i) + "'><input type='number' step='0.01' id='price" + String(i) + "' name='price' value='" + String(slotPrices[i],2) + "' required></div><button type='submit' class='btn btn-primary'>Preis Speichern</button></form></div>";
   }
-  html += R"HTML(
-    </div>
-  </section>
+  html += "</div></section>";
 
-  <!-- CONFIG DISPLAY -->
-  <section id='display-config' class='page' style='display:none;'>
-    <div class='top-bar'><h1>Display Texte</h1></div>
-    <div class='stat-box' style='max-width:600px;'>
-      <form action='/savedisplayconfig' method='post'>
-        <div class='input-group'>
-          <label>Slogan (Zeile 1)</label>
-          <input type='text' name='slogan' value=')HTML" + displaySlogan + R"HTML(' maxlength=')HTML" + String(SLOGAN_MAX_LENGTH) + R"HTML('>
-        </div>
-        <div class='input-group'>
-          <label>Footer (Zeile 2)</label>
-          <input type='text' name='footer' value=')HTML" + displayFooter + R"HTML(' maxlength='30'>
-        </div>
-        <button type='submit' class='btn-main'>Texte übernehmen</button>
-      </form>
-    </div>
-  </section>
+// Display Config Section
+  html += R"HTML(<section id='display-config' class='content-section' style='display:none;'><h1>Anzeige anpassen</h1><div class='card'>
+    <h2>Footer-Texte</h2>
+    <form action='/savedisplayconfig' method='post'>
+      <div class='form-group'>
+        <label for='slogan_input'>Slogan (über dem Footer, max. )HTML" + String(SLOGAN_MAX_LENGTH) + R"HTML( Zeichen):</label>
+        <input type='text' id='slogan_input' name='slogan' value=')HTML" + displaySlogan + R"HTML(' maxlength=')HTML" + String(SLOGAN_MAX_LENGTH) + R"HTML('>
+      </div>
+      <div class='form-group'>
+        <label for='footer_input'>Footer-Text (unterste Zeile, max. 30 Zeichen):</label>
+        <input type='text' id='footer_input' name='footer' value=')HTML" + displayFooter + R"HTML(' maxlength='30' required>
+      </div>
+      <button type='submit' class='btn btn-primary'>Speichern</button>
+    </form>
+  </div></section>)HTML";
 
-  <!-- CONFIG TIMING -->
-  <section id='timing-config' class='page' style='display:none;'>
-    <div class='top-bar'><h1>Zeitsteuerung (ms)</h1></div>
-    <div class='stat-box'>
-      <form action='/savetimingconfig' method='post'>
-        <div style='display:grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap:1.5rem;'>
-          <div class='input-group'><label>Coin Delay</label><input type='number' name='coin_delay' value=')HTML" + String(COIN_PROCESSING_DELAY) + R"HTML('></div>
-          <div class='input-group'><label>Bill Debounce</label><input type='number' name='bill_isr_debounce' value=')HTML" + String(BILL_ISR_DEBOUNCE_MS) + R"HTML('></div>
-          <div class='input-group'><label>Bill Timeout</label><input type='number' name='bill_group_timeout' value=')HTML" + String(BILL_GROUP_PROCESSING_TIMEOUT_MS) + R"HTML('></div>
-          <div class='input-group'><label>Öffnungszeit</label><input type='number' name='disp_time' value=')HTML" + String(DISPENSE_RELAY_ON_TIME) + R"HTML('></div>
-          <div class='input-group'><label>Keypad Timeout</label><input type='number' name='keypad_time' value=')HTML" + String(KEYPAD_INPUT_TIMEOUT) + R"HTML('></div>
-          <div class='input-group'><label>Slot Anzeigezeit</label><input type='number' name='slot_sel_time' value=')HTML" + String(SLOT_SELECTION_TIMEOUT) + R"HTML('></div>
-          <div class='input-group'><label>Display Timeout</label><input type='number' name='disp_timeout' value=')HTML" + String(DISPLAY_TIMEOUT) + R"HTML('></div>
-        </div>
-        <button type='submit' class='btn-main' style='margin-top:2rem;'>Zeiten Speichern</button>
-      </form>
-    </div>
-  </section>
+  // Timing Config Section
+  html += R"HTML(<section id='timing-config' class='content-section' style='display:none;'><h1>Zeiteinstellungen</h1><div class='card'><form action='/savetimingconfig' method='post'>)HTML";
+  html += "<div class='form-group'><label for='coin_delay'>Münzverarbeitung Verzoegerung (ms):</label><input type='number' id='coin_delay' name='coin_delay' value='" + String(COIN_PROCESSING_DELAY) + "' required></div>";
+  html += "<div class='form-group'><label for='bill_isr_debounce'>Schein ISR Entprellzeit (ms):</label><input type='number' id='bill_isr_debounce' name='bill_isr_debounce' value='" + String(BILL_ISR_DEBOUNCE_MS) + "' required></div>";
+  html += "<div class='form-group'><label for='bill_group_timeout'>Schein Gruppen Timeout (ms):</label><input type='number' id='bill_group_timeout' name='bill_group_timeout' value='" + String(BILL_GROUP_PROCESSING_TIMEOUT_MS) + "' required></div>";
+  html += "<div class='form-group'><label for='disp_time'>Fach Oeffnungszeit (ms):</label><input type='number' id='disp_time' name='disp_time' value='" + String(DISPENSE_RELAY_ON_TIME) + "' required></div>";
+  html += "<div class='form-group'><label for='keypad_time'>Keypad Eingabe Timeout (ms):</label><input type='number' id='keypad_time' name='keypad_time' value='" + String(KEYPAD_INPUT_TIMEOUT) + "' required></div>";
+  html += "<div class='form-group'><label for='slot_sel_time'>Fachauswahl Anzeige Timeout (ms):</label><input type='number' id='slot_sel_time' name='slot_sel_time' value='" + String(SLOT_SELECTION_TIMEOUT) + "' required></div>";
+  html += "<div class='form-group'><label for='disp_timeout'>Display Timeout (ms):</label><input type='number' id='disp_timeout' name='disp_timeout' value='" + String(DISPLAY_TIMEOUT) + "' required></div>";
+  html += R"HTML(<button type='submit' class='btn btn-primary'>Zeiten Speichern</button></form></div></section>)HTML";
 
-  <!-- CONFIG TELEGRAM -->
-  <section id='telegram-config' class='page' style='display:none;'>
-    <div class='top-bar'><h1>Telegram Bot</h1></div>
-    <div class='stat-box'>
-      <form action='/savetelegramconfig' method='post'>
-        <div style='display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:1rem;'>
-          <label class='check-row' style='margin-bottom:0; flex-shrink:0;'>
-            <input type='checkbox' name='tg_enabled' )HTML" + String(telegramEnabled ? "checked" : "") + R"HTML(>
-            <b>Integration Aktivieren</b>
-          </label>
-          <a href='https://hanimat.at/telegram.html' target='_blank' style='color:var(--brand); text-decoration:none; font-size:0.8rem; background:rgba(255,159,28,0.1); padding:5px 12px; border-radius:8px; border:1px solid rgba(255,159,28,0.3);'>
-            &#128214; Setup-Anleitung
-          </a>
-        </div>
-        
-        <div style='display:grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap:1.5rem; margin-top:1rem;'>
-           <div class='input-group'><label>Bot Token</label><input type='password' name='tg_token' value=')HTML" + telegramBotToken + R"HTML('></div>
-           <div class='input-group'><label>Chat ID</label><input type='text' name='tg_chat_id' value=')HTML" + telegramChatId + R"HTML('></div>
-        </div>
+  // Telegram Config Section
+  html += R"HTML(<section id='telegram-config' class='content-section' style='display:none;'><h1>Benachrichtigungen</h1><div class='card'><form action='/savetelegramconfig' method='post'>)HTML";
+  html += "<h2>Telegram Konfiguration</h2>";
+  html += String("<div class='form-group'><label class='checkbox-label'><input type='checkbox' name='tg_enabled' ") + (telegramEnabled ? "checked" : "") + "> <b>Telegram-Benachrichtigungen aktivieren</b></label></div>";
+  html += "<div class='form-group'><label for='tg_token'>Bot Token:</label><input type='password' id='tg_token' name='tg_token' value='" + telegramBotToken + "'></div>";
+  html += "<div class='form-group'><label for='tg_chat_id'>Chat ID:</label><input type='text' id='tg_chat_id' name='tg_chat_id' value='" + telegramChatId + "'></div>";
+  html += "<h2>Benachrichtigungs-Optionen</h2>";
+  html += String("<div class='form-group'><label class='checkbox-label'><input type='checkbox' name='notify_sale' ") + (telegramNotifyOnSale ? "checked" : "") + "> Bei jedem Verkauf benachrichtigen</label></div>";
+  html += String("<div class='form-group'><label class='checkbox-label'><input type='checkbox' name='notify_almost_empty' ") + (telegramNotifyAlmostEmpty ? "checked" : "") + "> Benachrichtigen, wenn Automat fast leer ist</label></div>";
+  html += "<div class='form-group'><label for='almost_empty_threshold'>\"Fast leer\" Schwelle (Anzahl Fächer):</label><input type='number' id='almost_empty_threshold' name='almost_empty_threshold' value='" + String(almostEmptyThreshold) + "' required></div>";
+  html += String("<div class='form-group'><label class='checkbox-label'><input type='checkbox' name='notify_empty' ") + (telegramNotifyEmpty ? "checked" : "") + "> Benachrichtigen, wenn Automat komplett leer ist</label></div>";
+  html += R"HTML(<button type='submit' class='btn btn-primary'>Speichern</button></form><form action='/sendtesttelegram' method='post' style='margin-top: 1rem;'><button type='submit' class='btn btn-secondary'>Testnachricht senden</button></form></div></section>)HTML";
 
-        <h3 style='color:white; font-size:1rem; margin-top:1.5rem;'>Benachrichtigungen</h3>
-        <label class='check-row'><input type='checkbox' name='notify_sale' )HTML" + String(telegramNotifyOnSale ? "checked" : "") + R"HTML(> Bei Verkauf</label>
-        <label class='check-row'><input type='checkbox' name='notify_almost_empty' )HTML" + String(telegramNotifyAlmostEmpty ? "checked" : "") + R"HTML(> Wenn fast leer</label>
-        <div class='input-group' style='margin-left:30px;'><label>Schwelle (Menge)</label><input type='number' name='almost_empty_threshold' value=')HTML" + String(almostEmptyThreshold) + R"HTML('></div>
-        <label class='check-row'><input type='checkbox' name='notify_empty' )HTML" + String(telegramNotifyEmpty ? "checked" : "") + R"HTML(> Wenn komplett leer</label>
-
-        <button type='submit' class='btn-main' style='margin-top:1.5rem;'>Speichern</button>
-      </form>
-      
-      <form action='/sendtesttelegram' method='post' style='margin-top:2rem; border-top:1px solid var(--border); padding-top:1rem;'>
-         <button type='submit' class='btn-sec'>Test Nachricht Senden</button>
-      </form>
-    </div>
-  </section>
-
-  <!-- CONFIG NETWORK -->
-  )HTML";
+  // Network Config Section
   preferences.begin("hanimat", false);
   String staticIP_val = preferences.getString("static_ip", "");
   String gateway_val = preferences.getString("gateway", "");
   String subnet_val = preferences.getString("subnet", "");
   String dns1_val = preferences.getString("dns1", "8.8.8.8");
   preferences.end();
+  html += R"HTML(<section id='network-config' class='content-section' style='display:none;'><h1>Netzwerkeinstellungen</h1><div class='card'>)HTML";
+  html += "<p>Aktuelle IP: " + WiFi.localIP().toString() + "</p>";
+  html += String("<p>Modus: ") + (staticIP_val.length() > 0 ? "Statische IP" : "DHCP") + "</p>";
+  html += R"HTML(<form action='/setstaticip' method='post'>)HTML";
+  html += "<div class='form-group'><label for='static_ip_input'>Statische IP (leer für DHCP):</label><input type='text' id='static_ip_input' name='static_ip' value='" + staticIP_val + "'></div>";
+  html += "<div class='form-group'><label for='gateway_input'>Gateway:</label><input type='text' id='gateway_input' name='gateway' value='" + gateway_val + "'></div>";
+  html += "<div class='form-group'><label for='subnet_input'>Subnetzmaske:</label><input type='text' id='subnet_input' name='subnet' value='" + subnet_val + "'></div>";
+  html += "<div class='form-group'><label for='dns1_input'>DNS 1 (optional):</label><input type='text' id='dns1_input' name='dns1' value='" + dns1_val + "'></div>";
+  html += R"HTML(<button type='submit' class='btn btn-primary'>Speichern & Neustart</button></form></div></section>)HTML";
+    
+  // Password Config Section
+  html += R"HTML(<section id='password-config' class='content-section' style='display:none;'><h1>Passwort ändern</h1><div class='card'><form action='/changepassword' method='post'><div class='form-group'><label for='newPasswordInput'>Neues Passwort (min. 4 Zeichen):</label><input type='password' id='newPasswordInput' name='newPassword' required></div><button type='submit' class='btn btn-primary'>Passwort Speichern</button></form></div></section>)HTML";
+
+  // Logs Section
+  html += R"HTML(<section id='logs' class='content-section' style='display:none;'><h1>Live Logs</h1><div class='card'><div id='log-console'>Lade Logs...</div></div></section>)HTML";
+
+  // OTA Update Section
+  html += R"HTML(<section id='ota-update-section' class='content-section' style='display:none;'><h1>System Update (OTA)</h1><div class='card'>
+    <h2>Online Update</h2>
+    <div style='margin-bottom: 2rem; padding: 1rem; background: #2C2C2C; border-radius: 0.5rem;'>
+      <p style='margin-bottom: 1rem;'>Hanimat Server: www.hanimat.at</p>
+      <div id='online-update-status' style='margin-bottom: 1rem; font-weight: bold;'></div>
+      <div class='form-inline' style='gap:1rem;'>
+        <button onclick='checkOnlineUpdate()' class='btn btn-secondary'>Auf Update prüfen</button>
+        <form action='/start-online-update' method='post' id='update-form' style='display:none;'>
+            <button type='submit' class='btn btn-primary'>Jetzt aktualisieren</button>
+        </form>
+      </div>
+    </div>
+
+    <h2>Manuelles Update (Datei hochladen)</h2>
+    <form method='POST' action='/ota-upload' enctype='multipart/form-data'><input type='file' name='update' accept='.bin' required><br><br><button type='submit' class='btn btn-primary'>Update starten</button></form>
+  </div></section>)HTML";
+
   html += R"HTML(
-  <section id='network-config' class='page' style='display:none;'>
-    <div class='top-bar'><h1>Netzwerk</h1></div>
-    <div class='stat-box'>
-       <div style='background:rgba(46, 204, 113, 0.1); border:1px solid var(--success); color:var(--success); padding:1rem; border-radius:10px; margin-bottom:2rem;'>
-         IP: )HTML" + WiFi.localIP().toString() + R"HTML( | Mode: )HTML" + (staticIP_val.length() > 0 ? "STATIC" : "DHCP") + R"HTML(
-       </div>
-       <form action='/setstaticip' method='post'>
-         <div style='display:grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap:1.5rem;'>
-           <div class='input-group'><label>Static IP (leer = DHCP)</label><input type='text' name='static_ip' value=')HTML" + staticIP_val + R"HTML('></div>
-           <div class='input-group'><label>Gateway</label><input type='text' name='gateway' value=')HTML" + gateway_val + R"HTML('></div>
-           <div class='input-group'><label>Subnet</label><input type='text' name='subnet' value=')HTML" + subnet_val + R"HTML('></div>
-           <div class='input-group'><label>DNS</label><input type='text' name='dns1' value=')HTML" + dns1_val + R"HTML('></div>
-         </div>
-         <button type='submit' class='btn-main' style='margin-top:1.5rem;'>Speichern & Neustart</button>
-       </form>
-    </div>
-  </section>
-
-  <!-- CONFIG PASSWORD -->
-  <section id='password-config' class='page' style='display:none;'>
-    <div class='top-bar'><h1>Sicherheit</h1></div>
-    <div class='stat-box' style='max-width:500px;'>
-      <form action='/changepassword' method='post'>
-         <div class='input-group'>
-            <label>Neues Admin Passwort</label>
-            <input type='password' name='newPassword' required minlength='4' placeholder='****'>
-         </div>
-         <button type='submit' class='btn-main'>Passwort ändern</button>
-      </form>
-    </div>
-  </section>
-
-  <!-- LOGS -->
-  <section id='logs' class='page' style='display:none;'>
-    <div class='top-bar'><h1>System Logs</h1></div>
-    <div class='stat-box'>
-       <div id='log-output'>Lade Daten...</div>
-    </div>
-  </section>
-
-  <!-- UPDATE -->
-  <section id='ota-update-section' class='page' style='display:none;'>
-    <div class='top-bar'><h1>Firmware Update</h1></div>
-    <div class='stat-box'>
-       <h2>Online Update</h2>
-       <div style='background:rgba(255,255,255,0.05); padding:1.5rem; border-radius:10px; margin-bottom:2rem;'>
-         <div id='online-update-status' style='margin-bottom:1rem; color:var(--brand);'>Status: Warte auf Prüfung...</div>
-         <div style='display:flex; gap:1rem;'>
-            <button onclick='checkOnlineUpdate()' class='btn-sec' style='width:auto;'>Version Prüfen</button>
-            <form action='/start-online-update' method='post' id='update-form' style='display:none;'>
-                <button type='submit' class='btn-main' style='width:auto;'>Update Starten</button>
-            </form>
-         </div>
-       </div>
-
-       <h2>Datei Upload</h2>
-       <form method='POST' action='/ota-upload' enctype='multipart/form-data'>
-          <div class='input-group'>
-             <input type='file' name='update' accept='.bin' required style='padding:1rem;'>
-          </div>
-          <button type='submit' class='btn-main'>Upload & Flash</button>
-       </form>
-    </div>
-  </section>
-
-  <!-- CONFIG SUMUP -->
-  <section id='sumup-config' class='page' style='display:none;'>
-    <div class='top-bar'><h1>SumUp Terminal</h1></div>
-    <div class='stat-box'>
-       <form action='/savesumup' method='post'>
-         <label class='check-row'>
-            <input type='checkbox' name='enabled' )HTML" + String(sumupEnabled ? "checked" : "") + R"HTML(>
-            <b>SumUp Aktiviert</b>
-         </label>
-         <div class='input-group'><label>API Key</label><input type='password' name='apiKey' value=')HTML" + sumupApiKey + R"HTML('></div>
-         <div class='input-group'><label>Merchant ID</label><input type='text' name='merchantId' value=')HTML" + sumupMerchantId + R"HTML('></div>
-         <div class='input-group'><label>Reader ID</label><input type='text' name='readerId' value=')HTML" + sumupReaderId + R"HTML('></div>
-         <div class='input-group'><label>Timeout (s)</label><input type='number' name='timeout' value=')HTML" + String(sumupTimeout/1000) + R"HTML(' min='10'></div>
-         <button type='submit' class='btn-main'>Speichern</button>
-       </form>
-
-       <h2 style='margin-top:2rem;'>Pairing</h2>
-       <div style='background:rgba(255,255,255,0.05); padding:1.5rem; border-radius:10px;'>
-          <form action='/pairsumup' method='post' style='margin-bottom:1rem;'>
-            <div style='display:flex; gap:10px;'>
-               <input type='text' name='code' placeholder='Code (8-stellig)' style='margin:0;'>
-               <button type='submit' class='btn-sec' style='width:auto; margin:0;'>Koppeln</button>
-            </div>
-          </form>
-          <form action='/disconnectsumup' method='post'>
-             <button type='submit' class='btn-sec' style='color:var(--danger); border-color:var(--danger);'>Entkoppeln (Reset)</button>
-          </form>
-       </div>
-    </div>
-  </section>
-
-</div> <!-- End Main -->
-
+<section id='sumup-config' class='content-section' style='display:none;'>
+  <h1>SumUp EC-Zahlung</h1>
+  <div class='card'>
+    <form action='/savesumup' method='post'>
+      <div class='form-group'><label class='checkbox-label'><input type='checkbox' name='enabled' )HTML" + String(sumupEnabled ? "checked" : "") + R"HTML(> SumUp Aktivieren</label></div>
+      <div class='form-group'><label>API Key:</label><input type='password' name='apiKey' value=')HTML" + sumupApiKey + R"HTML('></div>
+      <div class='form-group'><label>Merchant ID:</label><input type='text' name='merchantId' value=')HTML" + sumupMerchantId + R"HTML('></div>
+      <div class='form-group'><label>Reader ID:</label><input type='text' name='readerId' value=')HTML" + sumupReaderId + R"HTML('></div>
+      <div class='form-group'><label>Timeout (Sekunden):</label><input type='number' name='timeout' value=')HTML" + String(sumupTimeout/1000) + R"HTML(' min='10' max='300'></div>
+      <button type='submit' class='btn btn-primary'>Speichern</button>
+    </form>
+    <hr style='margin:20px 0;'>
+    <h2>Terminal Koppeln / Reader ID holen</h2>
+    <form action='/pairsumup' method='post' class='form-inline'>
+      <input type='text' name='code' placeholder='8-stelliger Code vom Terminal'>
+      <button type='submit' class='btn btn-secondary'>Pairing Starten</button>
+    </form>
+    <br>
+    <form action='/disconnectsumup' method='post'>
+      <button type='submit' class='btn btn-danger'>Reader ID löschen (Trennen)</button>
+    </form>
+  </div>
+</section>
+</main>
 <script>
-function toggleMenu() {
-  document.querySelector('.sidebar').classList.toggle('open');
-  document.querySelector('.overlay').classList.toggle('open');
+function toggleSidebar() { document.querySelector('.sidebar').classList.toggle('active'); }
+function showSection(sectionId) {
+  document.querySelectorAll('.content-section').forEach(s => s.style.display = 'none');
+  const targetSection = document.getElementById(sectionId);
+  if (targetSection) { targetSection.style.display = 'block'; }
+  document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+  let activeLink = document.querySelector(`.nav-link[onclick*='showSection("${sectionId}")']`);
+  if(activeLink) activeLink.classList.add('active');
+  if (window.innerWidth <= 768 && document.querySelector('.sidebar').classList.contains('active')) { toggleSidebar(); }
+  if (sectionId === 'logs') { fetchLogs(); }
 }
-
-function go(id) {
-  // Hide all pages
-  document.querySelectorAll('.page').forEach(p => p.style.display = 'none');
-  
-  // Show target
-  const target = document.getElementById(id);
-  if(target) target.style.display = 'block';
-
-  // Update nav buttons
-  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-  // Find button that calls this function with this id
-  // Simple heuristic: re-select by looking at onclick attribute (simple for embedded)
-  const buttons = document.querySelectorAll('.nav-btn');
-  buttons.forEach(btn => {
-     if(btn.getAttribute('onclick').includes(id)) {
-        btn.classList.add('active');
-     }
-  });
-
-  // Mobile: Close menu after click
-  if(window.innerWidth <= 768) toggleMenu();
-
-  // Specific logic
-  if(id === 'logs') fetchLogs();
-}
-
 function fetchLogs(){
-  const console = document.getElementById('log-output');
-  if(!console) return;
-  fetch('/logdata').then(r=>r.text()).then(t => { 
-     console.textContent = t; 
-     console.scrollTop = console.scrollHeight;
-  });
+  const logConsole = document.getElementById('log-console');
+  if (!logConsole) return;
+  fetch('/logdata').then(r => r.text()).then(t => { logConsole.textContent = t; logConsole.scrollTop = logConsole.scrollHeight; });
 }
-
 function checkOnlineUpdate() {
-   const status = document.getElementById('online-update-status');
-   const btn = document.getElementById('update-form');
-   status.innerText = 'Verbinde zu hanimat.at...';
-   btn.style.display = 'none';
-   
-   fetch('/check-online-update')
-     .then(r => r.text())
-     .then(data => {
-        status.innerText = data;
-        if(data.includes('Update verfügbar')) btn.style.display = 'block';
-     })
-     .catch(e => status.innerText = 'Fehler: ' + e);
+    const statusDiv = document.getElementById('online-update-status');
+    const updateForm = document.getElementById('update-form');
+    statusDiv.innerText = 'Prüfe Version...';
+    updateForm.style.display = 'none';
+    
+    fetch('/check-online-update')
+        .then(response => response.text())
+        .then(data => {
+            statusDiv.innerText = data;
+            if (data.includes('Update verfügbar')) {
+                updateForm.style.display = 'block';
+            }
+        })
+        .catch(error => {
+            statusDiv.innerText = 'Fehler beim Prüfen: ' + error;
+        });
 }
-
-// Init
 document.addEventListener('DOMContentLoaded', () => {
-   const hash = window.location.hash.substring(1);
-   go(hash ? hash : 'dashboard');
-   if(document.getElementById('log-output')) setInterval(fetchLogs, 3000);
+  const hash = window.location.hash.substring(1);
+  if (hash && document.getElementById(hash)) { showSection(hash); } else { showSection('dashboard'); }
+  if(document.getElementById('log-console')) { setInterval(fetchLogs, 3000); }
 });
-</script>
-</body></html>
+</script></body></html>
 )HTML";
   server.send(200, "text/html; charset=UTF-8", html);
 }
+
 
 // =================================================================
 //                      UTILITY FUNCTIONS
@@ -2991,88 +2614,88 @@ int countEmptySlots() {
 void checkOverallStockLevel() {
     int totalAvailable = countAvailableSlots();
 
-    // 1. PRIORITÄT: Komplett ausverkauft (0 Fächer)
-    if (telegramNotifyEmpty && totalAvailable == 0) {
-        if (!emptyNotificationSent) {
-            String message = "🚨 ALARM: Der HANIMAT ist komplett ausverkauft! Bitte auffüllen! 😭";
-            sendTelegramMessage(message);
-            emptyNotificationSent = true;
-            almostEmptyNotificationSent = true; // Verhindert, dass beim Befüllen die Info-Nachricht doppelt kommt
-            logMessage("Telegram: Alarm 'Ausverkauft' gesendet.");
-        }
-    } 
-    
-    // 2. PRIORITÄT: Fast leer (Über 0, aber unter der Schwelle)
-    else if (telegramNotifyAlmostEmpty && totalAvailable > 0 && totalAvailable <= almostEmptyThreshold) {
-        if (!almostEmptyNotificationSent) {
-            String message = "⚠️ INFO: Der HANIMAT ist fast leer!\nVerfügbare Fächer: " + String(totalAvailable);
-            sendTelegramMessage(message);
-            almostEmptyNotificationSent = true;
-            logMessage("Telegram: Info 'Fast leer' gesendet (" + String(totalAvailable) + " übrig).");
-        }
-    } 
+    // Check for "almost empty"
+    if (telegramNotifyAlmostEmpty && totalAvailable > 0 && totalAvailable <= almostEmptyThreshold && !almostEmptyNotificationSent) {
+        String message = "⚠️ INFO: Der HANIMAT ist fast leer!\nVerfügbare Fächer: " + String(totalAvailable);
+        sendTelegramMessage(message);
+        almostEmptyNotificationSent = true;
+        emptyNotificationSent = false; // Reset this flag in case it was set
+    }
 
-    // 3. STATUS: Wieder aufgefüllt (Bestand über der Schwelle)
+    // Check for "completely empty"
+    else if (telegramNotifyEmpty && totalAvailable == 0 && !emptyNotificationSent) {
+        String message = "🚨 ALARM: Der HANIMAT ist komplett ausverkauft! Bitte auffüllen! 😭";
+        sendTelegramMessage(message);
+        emptyNotificationSent = true;
+        almostEmptyNotificationSent = true; // Also considered almost empty
+    }
+
+    // Reset flags if stock is high again
     else if (totalAvailable > almostEmptyThreshold) {
-        // Falls vorher eine Warnung aktiv war, loggen wir das Zurücksetzen
-        if (almostEmptyNotificationSent || emptyNotificationSent) {
-            logMessage("Bestand wieder ok (" + String(totalAvailable) + "). Benachrichtigungs-Flags zurückgesetzt.");
+        if(almostEmptyNotificationSent || emptyNotificationSent) {
+            logMessage("Stock level is high again. Resetting notification flags.");
         }
         almostEmptyNotificationSent = false;
         emptyNotificationSent = false;
     }
+
 }
 /**
  * @brief Sendet einen Status-Ping an das Hanimat-Netzwerk.
  * Respektiert strikt den Offline-Schalter und nutzt Timeouts.
  */
 void sendHanimatStatusPing() {
-  // 1. HARDWARE-CHECK: Offline-Schalter prüfen
-  if (digitalRead(OFFLINE_MODE_PIN) == LOW) return; 
-
-  // 2. SOFTWARE-CHECK: Status aktiv?
-  if (!statusEnabled) return;
-
-  // 3. WLAN-CHECK: Nur wenn verbunden
-  if (WiFi.status() != WL_CONNECTED) return;
-
-  // 4. PERFORMANCE-CHECK: Nur pingen, wenn der Automat im Leerlauf (IDLE) ist
-  // Wenn gerade ein Verkauf läuft oder das Keypad benutzt wird, verschieben wir den Ping.
-  if (dispenseJob.active || currentSystemState != CurrentSystemState::IDLE) {
-      // Wir setzen den Timer so, dass er es in 1 Minute (60.000 ms) wieder probiert
-      lastStatusPing = millis() - (statusInterval - 60000); 
-      return;
+  // 1. HARDWARE VORRANG: Prüfen, ob Offline-Modus per Schalter aktiv ist
+  // Wenn Pin 27 LOW ist (Offline Modus), brechen wir SOFORT ab.
+  if (digitalRead(OFFLINE_MODE_PIN) == LOW) {
+    // Wir loggen hier nichts, um das Log im Offline-Betrieb nicht vollzumüllen.
+    return; 
   }
 
-  // 5. HEARTBEAT SENDEN
+  // 2. SOFTWARE CHECK: Ist der Status-Dienst in der Config aktiv?
+  if (!statusEnabled) return;
+
+  // 3. WLAN CHECK: Ohne Internet kein Ping
+  if (WiFi.status() != WL_CONNECTED) {
+    // Kein Log nötig, WiFi-Manager kümmert sich um Reconnects
+    return;
+  }
+
+  // 4. HEARTBEAT SENDEN
   HTTPClient http;
-  WiFiClientSecure client; 
-  client.setInsecure();  
+  WiFiClientSecure client; // Wichtig für HTTPS
+  client.setInsecure();    // Zertifikate nicht prüfen (verhindert SSL Fehler)
   
-  // Timeouts extrem verkürzen für flüssige Bedienung (1,5 Sekunden statt 3)
-  http.setConnectTimeout(1500); 
-  http.setTimeout(1500);
+  // Timeout setzen! WICHTIG: Max 3 Sekunden warten, sonst hängt der Automat
+  http.setTimeout(3000); 
 
   String chipId = String((uint32_t)ESP.getEfuseMac(), HEX);
   chipId.toUpperCase();
+
+  // URL zusammenbauen
   String url = String(statusServerUrl) + "?id=" + chipId + "&key=" + statusApiKey + "&v=" + FIRMWARE_VERSION;
 
   logMessage("Status: Sende Heartbeat...");
+  // logMessage("DEBUG URL: " + url); // Kannst du später auskommentieren
 
-  if (http.begin(client, url)) {
+  // Anfrage starten
+  if (http.begin(client, url)) { // Nutzung von 'client' für HTTPS
     int httpCode = http.GET();
-    if (httpCode == 200) {
+
+    if (httpCode > 0) {
+      if (httpCode == 200) {
         logMessage("Status: OK (200)");
-    } else if (httpCode > 0) {
-        logMessage("Status: Server Fehler " + String(httpCode));
+      } else {
+        logMessage("Status: Server antwortet " + String(httpCode));
+      }
     } else {
-        logMessage("Status: Timeout/Netzwerkfehler");
+      logMessage("Status: Fehler (" + http.errorToString(httpCode) + ")");
     }
     http.end();
   } else {
-    logMessage("Status: Verbindung fehlgeschlagen");
+    logMessage("Status: Konnte Verbindung nicht aufbauen");
   }
 
-  // Zeitstempel aktualisieren
+  // Zeitstempel aktualisieren, damit der nächste Ping erst in 60min kommt
   lastStatusPing = millis();
 }
