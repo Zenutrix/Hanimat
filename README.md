@@ -1,12 +1,12 @@
-# 🍯 HANIMAT – Der Open-Source Honigautomat (V1.4.0-ec)
+# 🍯 HANIMAT – Der Open-Source Honigautomat (V1.4.1-ec)
 
-> **🚀 RELEASE-UPDATE (V1.4.0-ec):**
+> **🚀 RELEASE-UPDATE (V1.4.1-ec):**
 > Dies ist der bisher größte Meilenstein! Der HANIMAT unterstützt nun offiziell **bargeldloses Bezahlen via SumUp**. 
 > Zusätzlich wurden massive Optimierungen an der Hardware-Schonung, der Benutzeroberfläche und dem Update-Prozess vorgenommen.
 
 Willkommen beim HANIMAT! Dieses Projekt wurde ins Leben gerufen, um Imkern und Direktvermarktern eine **einfache, moderne und kostengünstige Möglichkeit** zu bieten, Produkte rund um die Uhr selbstständig zu verkaufen – ganz ohne teure Industrielösungen.
 
-## 🌟 Was ist neu in Version 1.4.0-ec?
+## 🌟 Was ist neu in Version 1.4.1-ec?
 
 | Feature | Details |
 | :--- | :--- |
