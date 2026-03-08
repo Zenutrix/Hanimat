@@ -2,7 +2,7 @@
  * @file main.cpp
  * @author Thomas Schöpf / Hanimat
  * @brief Firmware für die HANIMAT Verkaufsmaschine basierend auf der ESP32 Plattform.
- * @version 1.4.0-ec
+ * @version 1.4.1-ec
  * @date 02-02-2026
  *
  * © Copyright Thomas Schöpf
@@ -70,7 +70,7 @@ void logMessage(const String& msg) {
 // =================================================================
 //                      FIRMWARE VERSION
 // =================================================================
-const String FIRMWARE_VERSION = "V1.4.0-ec";
+const String FIRMWARE_VERSION = "V1.4.1-ec";
 
 // =================================================================
 //                      CONFIGURATION CONSTANTS
@@ -506,6 +506,54 @@ void saveCreditToNVS(bool force) {
     }
 }
 
+/**
+ * @brief Wird vom WiFiManager aufgerufen, wenn er in den AP-Modus (Setup-Portal) wechselt.
+ */
+void configModeCallback(WiFiManager *myWiFiManager) {
+  logMessage("Kein WLAN gefunden. Setup-Portal gestartet.");
+  
+  tft.fillScreen(HANIMAT_BG);
+  
+  // Header: HANIMAT Setup
+  tft.setFont(&Poppins_Black14pt7b);
+  tft.setTextColor(HANIMAT_HEADER);
+  int16_t x1, y1; uint16_t w, h;
+  String title = "HANIMAT Setup";
+  tft.getTextBounds(title, 0, 0, &x1, &y1, &w, &h);
+  tft.setCursor((tft.width() - w) / 2, 40);
+  tft.println(title);
+
+  // Info-Text
+  tft.setFont(&Poppins_Regular10pt7b);
+  
+  tft.setTextColor(HANIMAT_ACCENT);
+  String line1 = "WLAN nicht konfiguriert!";
+  tft.getTextBounds(line1, 0, 0, &x1, &y1, &w, &h);
+  tft.setCursor((tft.width() - w) / 2, 75);
+  tft.println(line1);
+
+  tft.setTextColor(HANIMAT_TEXT);
+  String line2 = "WLAN SSID: " + myWiFiManager->getConfigPortalSSID();
+  tft.getTextBounds(line2, 0, 0, &x1, &y1, &w, &h);
+  tft.setCursor((tft.width() - w) / 2, 110);
+  tft.println(line2);
+
+  String line3 = "PW: Honig1234";
+  tft.getTextBounds(line3, 0, 0, &x1, &y1, &w, &h);
+  tft.setCursor((tft.width() - w) / 2, 135);
+  tft.println(line3);
+
+  String line4 = "IP: 192.168.4.1";
+  tft.getTextBounds(line4, 0, 0, &x1, &y1, &w, &h);
+  tft.setCursor((tft.width() - w) / 2, 160);
+  tft.println(line4);
+  
+  // Piepton zur Signalisierung, dass er im Setup-Modus ist
+  ledcWriteTone(0, 1500);
+  delay(200);
+  ledcWriteTone(0, 0);
+}
+
 // =================================================================
 //                      INTERRUPT SERVICE ROUTINES
 // =================================================================
@@ -728,6 +776,7 @@ void setup() {
   bool offlineMode = (digitalRead(OFFLINE_MODE_PIN) == LOW);
   WiFiManager wm;
   wm.setConfigPortalTimeout(180);
+  wm.setAPCallback(configModeCallback);
 
   if (offlineMode) {
     logMessage("Operating Mode: OFFLINE (GPIO " + String(OFFLINE_MODE_PIN) + " is LOW)");
