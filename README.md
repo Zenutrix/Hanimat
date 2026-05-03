@@ -25,8 +25,9 @@
 - [Installation](#-installation)
 - [Konfiguration](#️-konfiguration)
 - [Hardware & Pinbelegung](#-hardware--pinbelegung)
+- [Zahlungs-Mapping](#-zahlungs-mapping-münzen--banknoten)
 - [SumUp-Einrichtung](#-sumup-einrichtung)
-- [OTA-Updates](#-ota-updates)
+- [OTA-Updates](#️-ota-updates)
 - [Community-Status](#-community-status--datenschutz)
 - [Beitragen](#-beitragen)
 - [Support & Community](#-support--community)
@@ -40,8 +41,8 @@ HANIMAT ist eine **vollständige Open-Source-Lösung** für einen selbst gebaute
 
 **Kernprinzipien:**
 - 🔓 **Offen** – Vollständiger Quellcode, Schaltpläne und Anleitungen sind frei verfügbar
-- 🛠️ **DIY-freundlich** – Aufgebaut mit handelsüblichen Komponenten (ESP32, ILI9341, Relais-Karte)
-- 📐 **Flexibel** – Skalierbar von 6 bis 16 Fächern, anpassbar für verschiedene Produkte
+- 🛠️ **DIY-freundlich** – Aufgebaut auf einer eigenen PCB mit MOSFETs sowie einer optionalen Erweiterungsplatine
+- 📐 **Massiv skalierbar** – Standard 16 Fächer, mit Erweiterungsplatinen bis zu 128 Fächer möglich
 - 🤝 **Community-getrieben** – Weiterentwickelt durch und für seine Nutzer
 
 ---
@@ -73,35 +74,27 @@ HANIMAT ist eine **vollständige Open-Source-Lösung** für einen selbst gebaute
 | **Hybrid-Zahlung** | Bargeld + Kartenzahlung für den Restbetrag kombinierbar |
 | **Display** | ILI9341 TFT 320×240, vollständige Farb-UI mit Statusanzeigen |
 | **Web-Interface** | Responsives Admin-Panel, vollständig bedienbar vom Smartphone |
-| **Fächer** | 6–16 Fächer via I2C-Relaiskarte, jedes Fach einzeln konfigurierbar |
+| **Fächer** | Standard 16 Fächer, mit Erweiterungsplatine bis zu 128 Fächer skalierbar |
 | **Preise** | Individuelle Preise pro Fach, Bulk-Eingabe per Tabelle |
 | **Benachrichtigungen** | Telegram-Bot: Verkäufe, Bestandswarnungen, Absturzberichte, Heap-Warnungen |
-| **Firmware-Updates** | OTA per Web-Interface – kein USB-Kabel nach der Erstinstallation nötig |
+| **Firmware-Updates** | OTA direkt im Admin-Panel – kein USB-Kabel nach der Erstinstallation nötig |
 | **Sicherheit** | Login mit Session-Token, Brute-Force-Schutz (automatische IP-Sperre) |
-| **Statistik** | Verkaufslog (RAM), Umsatzübersicht, Absturzzähler mit Reset-Funktion |
+| **Statistik** | Verkaufslog, Umsatzübersicht, Absturzzähler mit Reset-Funktion |
 | **Stabilität** | Non-blocking Loop, Heap-Monitoring, Absturzprotokoll via `esp_reset_reason()` |
-| **Flash-Schonung** | Guthaben im RAM verwaltet, minimale NVS-Schreibzyklen |
-| **Community-Status** | Anonymes Lebenszeichen an status.hanimat.at (jederzeit abschaltbar) |
 
 ---
 
 ## 📋 Voraussetzungen
 
 ### Software
-- [Visual Studio Code](https://code.visualstudio.com/) mit [PlatformIO-Extension](https://platformio.org/install/ide?install=vscode) **– nur für Entwickler / eigene Builds**
-- Oder: Direkt per **[Web-Installer](https://www.hanimat.at/installer/)** flashen (kein Software-Setup nötig)
+- Direkt per **[Web-Installer](https://www.hanimat.at/installer/)** flashen – kein Software-Setup nötig
+- Oder: [Visual Studio Code](https://code.visualstudio.com/) + [PlatformIO](https://platformio.org/install/ide?install=vscode) für eigene Builds
 
 ### Hardware
-| Komponente | Empfehlung |
-| :--- | :--- |
-| Mikrocontroller | ESP32 Dev Board (38-Pin) |
-| Display | ILI9341 TFT 2,8" 320×240 SPI |
-| Relais-Karte | PCF8574 I2C 8-Kanal (erweiterbar auf 16) |
-| Münzprüfer | HX-616 oder kompatibel (Impuls-Ausgang) |
-| Banknotenprüfer | ITL oder kompatibel (Impuls-Ausgang) |
-| Keypad | 4×4 Matrix-Keypad |
-| Buzzer | Aktiver Buzzer 5V |
-| Netzteil | 5V / min. 2A |
+Alle Infos zur eigenen Platine (PCB, Schaltpläne, Stückliste) findest du hier:
+**➡️ [github.com/Zenutrix/Hanimat/tree/main/Hardware](https://github.com/Zenutrix/Hanimat/tree/main/Hardware)**
+
+Sowie auf der Projektseite: **[hanimat.at](https://www.hanimat.at)**
 
 ### Accounts (optional)
 - **SumUp** – für bargeldlose Zahlung: [sumup.com](https://sumup.com)
@@ -126,26 +119,22 @@ Der einfachste Weg: Direkt im Browser flashen – ohne Software-Installation, oh
 ### 🛠️ Option 2 – PlatformIO (für Entwickler & eigene Builds)
 
 ```bash
-# Repository klonen
-git clone https://github.com/YOUR_USERNAME/hanimat.git
-cd hanimat
-
-# In VS Code öffnen
+git clone https://github.com/Zenutrix/Hanimat.git
+cd Hanimat
 code .
 ```
 
 1. PlatformIO-Extension in VS Code installieren
-2. ESP32 per USB anschließen (Port `COM3` bzw. `/dev/ttyUSB0`)
-3. In PlatformIO: **Upload** klicken (`platformio.ini` ist vorkonfiguriert)
-4. Beim ersten Start: WLAN-Hotspot `HANIMAT-Setup` verbinden und WLAN-Daten eingeben
+2. ESP32 per USB anschließen
+3. In PlatformIO: **Upload** klicken – `platformio.ini` ist vorkonfiguriert
 
 ### Erstkonfiguration nach dem Flashen
 
 1. Mit dem WLAN-Hotspot **`HANIMAT-Setup`** verbinden
 2. Im Browser `192.168.4.1` aufrufen → WLAN-Zugangsdaten eingeben
-3. ESP32 verbindet sich und zeigt die IP-Adresse am Display
-4. Web-Interface unter der angezeigten IP aufrufen und einloggen
-5. Passwort, Fachanzahl, Preise und weitere Einstellungen konfigurieren
+3. ESP32 verbindet sich und zeigt die IP-Adresse am Display an
+4. Web-Interface unter der angezeigten IP öffnen und einloggen (Standard-Passwort: `admin`)
+5. Passwort sofort ändern, Fachanzahl, Preise und weitere Einstellungen konfigurieren
 
 ---
 
@@ -155,35 +144,88 @@ Alle Einstellungen sind über das **Web-Interface** erreichbar – kein Editiere
 
 | Bereich | Beschreibung |
 | :--- | :--- |
-| **System** | Passwort, Gerätename, Display-Timeout, Offline-Modus |
+| **System** | Passwort, Display-Timeout, Offline-Modus |
 | **Fächer** | Anzahl, Preise, Verfügbarkeit, Sperren einzelner Fächer |
 | **Zahlung** | Münzwerte, Banknotenwerte, Gutschrift-Funktion |
-| **SumUp** | API-Key, Merchant-ID, Reader pairen/trennen/prüfen |
+| **SumUp** | API-Key, Merchant-ID, Reader pairen / trennen / prüfen |
 | **Telegram** | Bot-Token, Chat-ID, Benachrichtigungstypen aktivieren |
-| **System / OTA** | Firmware-Update, Neustart, Community-Status an/aus |
-
-### Wichtige `platformio.ini`-Flags
-
-```ini
-board_build.partitions = min_spiffs.csv   ; ~1,9 MB pro OTA-Slot (nötig für OTA bei >1,25 MB Firmware)
-build_flags =
-    -Os                    ; Größenoptimierung (~15–25% kleinere Binary)
-    -DCORE_DEBUG_LEVEL=0   ; Arduino-Core Debug-Output deaktiviert (spart Flash + RAM)
-```
+| **OTA** | Firmware automatisch prüfen & installieren oder manuell `.bin` hochladen |
 
 ---
 
 ## 🔌 Hardware & Pinbelegung
 
-| Komponente | ESP32-Pin(s) | Hinweis |
+Alle Pinbelegungen direkt aus der Firmware (`src/main.cpp`):
+
+### TFT Display (ILI9341, SPI)
+
+| Funktion | ESP32-Pin |
+| :--- | :--- |
+| CS (Chip Select) | GPIO 26 |
+| DC (Data/Command) | GPIO 4 |
+| RST (Reset) | GPIO 16 |
+| SCK (Clock) | GPIO 18 |
+| MOSI (Data) | GPIO 23 |
+| MISO | nicht verwendet |
+
+### Eingaben & Peripherie
+
+| Komponente | ESP32-Pin | Hinweis |
 | :--- | :--- | :--- |
-| **TFT Display (ILI9341)** | CLK: 18 · MOSI: 23 · CS: 16 · DC: 4 · RST: 26 | SPI-Bus |
-| **Münzprüfer** | GPIO 5 | Impuls-Eingang |
-| **Banknotenprüfer** | GPIO 32 | Impuls-Eingang |
-| **I2C Relais-Karte** | SDA: 21 · SCL: 22 | PCF8574, Adresse 0x20 |
-| **Keypad** | Matrix, 7 Pins | Rows/Cols siehe `main.cpp` |
+| **Münzprüfer** | GPIO 5 | Impuls-Eingang (ISR) |
+| **Banknotenprüfer** | GPIO 32 | Impuls-Eingang (ISR, mit Debounce) |
+| **Banknoten-Inhibit** | GPIO 33 | Sperrt Banknoteneinzug |
 | **Buzzer** | GPIO 25 | Aktiver Buzzer |
-| **Offline-Mode Jumper** | GPIO 34 | LOW = kein WiFi/SumUp |
+| **SumUp-Taste** | GPIO 0 | Kartenzahlung auslösen (BOOT-Taster) |
+| **Offline-Mode Jumper** | GPIO 27 | LOW = kein WiFi, kein SumUp |
+
+### Keypad (4×3 Matrix)
+
+```
+Layout:   1  2  3
+          4  5  6
+          7  8  9
+          *  0  #
+```
+
+| | Pin |
+| :--- | :--- |
+| **Rows** (R1–R4) | GPIO 15, 14, 12, 17 |
+| **Cols** (C1–C3) | GPIO 2, 19, 13 |
+
+### I2C (Erweiterungsplatine / PCB)
+
+| Funktion | ESP32-Pin |
+| :--- | :--- |
+| SDA | GPIO 21 |
+| SCL | GPIO 22 |
+| I2C-Adresse | 0x20 |
+
+---
+
+## 💶 Zahlungs-Mapping (Münzen & Banknoten)
+
+Die Impulsanzahl des Prüfers wird direkt auf einen Betrag gemappt. Werte direkt aus der Firmware:
+
+### Münzen – `pulseValues[]`
+
+| Impulse | Betrag |
+| :--- | :--- |
+| 2 | 0,10 € |
+| 3 | 0,20 € |
+| 4 | 0,50 € |
+| 5 | 1,00 € |
+| 6 | 2,00 € |
+
+### Banknoten – `billValues[]`
+
+| Impulse | Betrag |
+| :--- | :--- |
+| 4 | 5 € |
+| 8 | 10 € |
+| 16 | 20 € |
+
+> Die Impulsbelegung hängt vom verwendeten Münz-/Banknotenprüfer ab und kann in `main.cpp` in den Arrays `pulseValues[]` und `billValues[]` angepasst werden.
 
 ---
 
@@ -195,7 +237,7 @@ HANIMAT unterstützt bargeldloses Bezahlen über ein **SumUp Solo**-Terminal (Ka
 - Personal API Key (`sup_sk_...`)
 - Merchant Code (z. B. `MPCB1CS4`)
 
-**Einrichtung Schritt für Schritt:**
+**Einrichtung:**
 1. Web-Interface → **SumUp** → API-Key und Merchant-ID eintragen → „Speichern"
 2. SumUp Solo-Terminal in den Pairing-Modus versetzen (Terminal → Einstellungen → Koppeln)
 3. Den angezeigten **8-stelligen Code** im Web-Interface unter „Pairing" eingeben → „Koppeln"
@@ -205,15 +247,13 @@ HANIMAT unterstützt bargeldloses Bezahlen über ein **SumUp Solo**-Terminal (Ka
 
 ---
 
-## ☁️ OTA-Updates
+## 🛰️ OTA-Updates
 
-Nach der Erstinstallation musst du den Automaten **nie wieder aufschrauben**:
+Nach der Erstinstallation musst du den Automaten **nie wieder aufschrauben**. Updates werden direkt im Admin-Panel verwaltet:
 
-1. Neue `firmware.bin` von [hanimat.at](https://www.hanimat.at) herunterladen
-2. Web-Interface → **System** → **Firmware-Update** → Datei hochladen
-3. ESP32 flasht sich selbst und startet automatisch neu (~30 Sekunden)
+**Automatisch (empfohlen):** Web-Interface → **System** → **Firmware-Update** → HANIMAT prüft auf neue Version und installiert mit einem Klick.
 
-> Die Firmware verwendet das `min_spiffs`-Partitionsschema mit **~1,9 MB pro OTA-Slot** – damit funktionieren auch zukünftige, größere Firmware-Versionen zuverlässig per OTA.
+**Manuell:** Im selben Bereich kann auch eine lokale `firmware.bin` hochgeladen werden – der ESP32 flasht sich selbst und startet automatisch neu (~30 Sekunden).
 
 ---
 
@@ -221,14 +261,11 @@ Nach der Erstinstallation musst du den Automaten **nie wieder aufschrauben**:
 
 Die Firmware sendet einmal pro Stunde ein anonymes Lebenszeichen an unsere Statusseite. Das zeigt wie viele HANIMATs aktiv sind und motiviert die Weiterentwicklung.
 
-**📊 Live ansehen:** [status.hanimat.at](https://status.hanimat.at)
+📊 **Live ansehen:** [status.hanimat.at](https://status.hanimat.at)
 
-**Was wird übertragen:** Anonymisierte Hardware-ID, Firmware-Version, Land. **Keine** IP-Adressen, Standorte oder Umsatzdaten.
+**Was wird übertragen:** Ausschließlich Firmware-Version und Herkunftsland – sonst nichts.
 
-**Deaktivierung:** Web-Interface → System → **Community-Status** deaktivieren. Alternativ in `main.cpp`:
-```cpp
-bool statusEnabled = false;
-```
+**Deaktivierung:** Web-Interface → System → **Community-Status** deaktivieren.
 
 ---
 
@@ -242,9 +279,7 @@ Beiträge sind herzlich willkommen! So kannst du helfen:
 4. Branch pushen: `git push origin feature/MeinFeature`
 5. **Pull Request** öffnen
 
-**Bug gefunden?** Bitte ein [Issue](../../issues) mit Log-Output und Firmware-Version öffnen.
-
-**Ideen & Verbesserungen?** Am besten direkt in der [Telegram-Community](https://t.me/+igwol5kmQGpiYWFk) diskutieren – viele Features entstanden aus Nutzer-Feedback.
+**Bug gefunden oder Frage?** Melde dich direkt in unserer [Telegram-Community](https://t.me/+igwol5kmQGpiYWFk) – dort sind wir aktiv und helfen schnell weiter.
 
 ---
 
@@ -254,6 +289,7 @@ Beiträge sind herzlich willkommen! So kannst du helfen:
 | :--- | :--- |
 | 🌐 Projektseite | [hanimat.at](https://www.hanimat.at) |
 | ⚡ Web-Installer | [hanimat.at/installer](https://www.hanimat.at/installer/) |
+| 🔧 Hardware / PCB | [github.com/Zenutrix/Hanimat/Hardware](https://github.com/Zenutrix/Hanimat/tree/main/Hardware) |
 | 💬 Telegram-Gruppe | [t.me/+igwol5kmQGpiYWFk](https://t.me/+igwol5kmQGpiYWFk) |
 | 📽️ YouTube | [Thomas Schöpf](https://www.youtube.com/@schoepf-tirol) |
 | 📊 Live-Status | [status.hanimat.at](https://status.hanimat.at) |
@@ -266,7 +302,7 @@ Dieses Projekt steht unter der **Creative Commons Lizenz CC BY-NC-SA 4.0**.
 
 - ✅ Kostenlos nutzbar und veränderbar
 - ✅ Weitergabe unter gleicher Lizenz erlaubt
-- ❌ Kommerzielle Weiterverkauf ohne Genehmigung nicht erlaubt
+- ❌ Kommerzieller Weiterverkauf ohne Genehmigung nicht erlaubt
 - ℹ️ Namensnennung erforderlich: **Thomas Schöpf – [schoepf-tirol.at](https://www.schoepf-tirol.at)**
 
 **[→ Vollständige Lizenzbedingungen](https://creativecommons.org/licenses/by-nc-sa/4.0/)**
