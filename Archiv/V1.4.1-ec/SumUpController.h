@@ -22,21 +22,20 @@ private:
     }
 
 public:
-    SumUpController(const String& key, const String& mId, const String& rId = "") {
+    SumUpController(String key, String mId, String rId = "") {
         apiKey = key;
         merchantId = mId;
         readerId = rId;
     }
 
-    void setReaderId(const String& id) { readerId = id; }
+    void setReaderId(String id) { readerId = id; }
     String getReaderId() { return readerId; }
 
     // --- PAIRING ---
     // Verbindet das physische Terminal mit diesem Controller
-    String pairReader(const String& pairingCode) {
+    String pairReader(String pairingCode) {
         if (apiKey.length() < 5 || merchantId.length() < 3) return "";
-        WiFiClientSecure client; client.setInsecure();
-        HTTPClient http;
+        WiFiClientSecure client; client.setInsecure(); HTTPClient http;
         String url = "https://api.sumup.com/v0.1/merchants/" + merchantId + "/readers";
         
         if (!http.begin(client, url)) return "";
@@ -76,8 +75,8 @@ bool unpairReader() {
         return true; 
     }
 
-    WiFiClientSecure client;
-    client.setInsecure(); // Verbindung verschlüsselt, Zertifikatskette nicht geprüft
+    WiFiClientSecure client; 
+    client.setInsecure(); // Wichtig für HTTPS ohne Root-CA-Check
     HTTPClient http;
 
     // Endpoint: DELETE /merchants/{mid}/readers/{rid}
@@ -119,63 +118,24 @@ bool unpairReader() {
         return false;
     }
 }
-    // --- READER STATUS PRÜFEN ---
-    // Prüft ob die gespeicherte Reader-ID noch auf SumUp's Servern existiert.
-    // Gibt true zurück wenn der Reader aktiv/bekannt ist, false bei 404 oder Fehler.
-    bool checkReader() {
-        if (apiKey.length() < 5 || merchantId.length() < 3 || readerId.length() < 5) {
-            log("checkReader: Fehlende Konfiguration.");
-            return false;
-        }
-        WiFiClientSecure client; client.setInsecure();
-        HTTPClient http;
-        String url = "https://api.sumup.com/v0.1/merchants/" + merchantId + "/readers/" + readerId;
-        log("GET -> " + url);
-        if (!http.begin(client, url)) { log("checkReader: http.begin() fehlgeschlagen"); return false; }
-        http.addHeader("Authorization", "Bearer " + apiKey);
-        int httpCode = http.GET();
-        String response = http.getString();
-        http.end();
-        if (httpCode == 200) {
-            log("checkReader: Reader ist aktiv (200 OK).");
-            return true;
-        } else {
-            log("checkReader: Fehler " + String(httpCode) + " -> " + response.substring(0, 80));
-            return false;
-        }
-    }
-
     // --- ZAHLUNG STARTEN ---
     // Sendet den Zahlungsbefehl an die SumUp Cloud
-    // @param amountCents  Zu zahlender Betrag in Cent (z.B. 510 = 5,10 EUR)
-    bool startPayment(int amountCents, String &outId) {
-        // Pflichtfelder prüfen — leere merchantId erzeugt URL ".../merchants//readers/..." → 404
-        if (apiKey.length() < 5 || merchantId.length() < 3 || readerId.length() < 5) {
-            log("startPayment ABGEBROCHEN: Fehlende Konfiguration!"
-                " apiKey=" + String(apiKey.length()) +
-                " mid=" + String(merchantId.length()) +
-                " rid=" + String(readerId.length()));
-            return false;
-        }
-        WiFiClientSecure client; client.setInsecure();
-        HTTPClient http;
+    bool startPayment(float amount, String &outId) {
+        if (apiKey.length() < 5 || readerId.length() < 5) return false;
+        WiFiClientSecure client; client.setInsecure(); HTTPClient http;
         String url = "https://api.sumup.com/v0.1/merchants/" + merchantId + "/readers/" + readerId + "/checkout";
-
-        // Diagnose-Log: zeigt die exakte URL und die ersten Zeichen des API-Keys
-        log("POST -> " + url);
-        log("Auth: Bearer " + apiKey.substring(0, 8) + "...");
-
-        if (!http.begin(client, url)) { log("http.begin() fehlgeschlagen"); return false; }
+        
+        if (!http.begin(client, url)) return false;
         http.addHeader("Authorization", "Bearer " + apiKey);
         http.addHeader("Content-Type", "application/json");
 
         JsonDocument doc;
-        // SumUp API erwartet den Betrag bereits in Cent (minor_unit = 2)
-        doc["total_amount"]["value"] = amountCents;
+        // Betrag muss in Cent übermittelt werden (minor_unit 2)
+        doc["total_amount"]["value"] = (long)(amount * 100);
         doc["total_amount"]["currency"] = "EUR";
         doc["total_amount"]["minor_unit"] = 2;
         doc["checkout_reference"] = "HANI-" + String(random(10000, 99999));
-        doc["description"] = "Hanimat " + String(amountCents / 100) + "." + String(amountCents % 100 < 10 ? "0" : "") + String(amountCents % 100) + " EUR";
+        doc["description"] = "Hanimat " + String(amount, 2) + " EUR";
         doc["return_url"] = "https://sumup.com"; 
 
         String body; serializeJson(doc, body);
@@ -204,10 +164,9 @@ bool unpairReader() {
 
     // --- STATUS PRÜFEN (History Scan - Robust) ---
     // Sucht die Transaktions-ID in der Historie des Händlers
-    String checkStatus(const String& trackingId) {
+    String checkStatus(String trackingId) {
         if (trackingId.length() < 5) return "UNKNOWN";
-        WiFiClientSecure client; client.setInsecure();
-        HTTPClient http;
+        WiFiClientSecure client; client.setInsecure(); HTTPClient http;
         String status = "PENDING"; 
 
         // WICHTIGE ÄNDERUNG: 
@@ -277,8 +236,7 @@ bool unpairReader() {
     // Bricht den Vorgang am Terminal ab (Reset in Idle)
     void cancel() {
         if (readerId.length() < 5) return;
-        WiFiClientSecure client; client.setInsecure();
-        HTTPClient http;
+        WiFiClientSecure client; client.setInsecure(); HTTPClient http;
         // Zwingt Terminal in den Idle Modus
         String url = "https://api.sumup.com/v0.1/merchants/" + merchantId + "/readers/" + readerId + "/terminate";
         log("Sende Terminate Befehl...");
