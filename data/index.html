@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <title>Hanimat Control</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+
+<!-- Mobile UI -->
+<div class="overlay" data-action="toggle-menu"></div>
+<div class="mobile-header">
+  <div class="logo" style="font-size:1.4rem">HANI<span>MAT</span></div>
+  <button class="menu-toggle" data-action="toggle-menu">&#9776;</button>
+</div>
+
+<!-- Sidebar -->
+<nav class="sidebar">
+  <div class="brand-header">
+    <div class="logo">HANI<span>MAT</span></div>
+    <div class="logo-sub">Thomas Schöpf</div>
+  </div>
+  <ul class="nav-list">
+    <li><button class="nav-btn active" data-go="dashboard"><span class="nav-icon">&#128202;</span> Dashboard</button></li>
+    <li><button class="nav-btn" data-go="slots-config"><span class="nav-icon">&#9881;</span> Slot Config</button></li>
+    <li><button class="nav-btn" data-go="display-config"><span class="nav-icon">&#128187;</span> Anzeige</button></li>
+    <li><button class="nav-btn" data-go="timing-config"><span class="nav-icon">&#9201;</span> Zeitsteuerung</button></li>
+    <li><button class="nav-btn" data-go="telegram-config"><span class="nav-icon">&#9993;</span> Telegram</button></li>
+    <li><button class="nav-btn" data-go="payment-config"><span class="nav-icon">&#x1F4B1;</span> Zahlungs-Setup</button></li>
+    <li><button class="nav-btn" data-go="sumup-config"><span class="nav-icon">&#128179;</span> SumUp</button></li>
+    <li><button class="nav-btn" data-go="network-config"><span class="nav-icon">&#128423;</span> Netzwerk</button></li>
+    <li><button class="nav-btn" data-go="password-config"><span class="nav-icon">&#128274;</span> Sicherheit</button></li>
+    <li><button class="nav-btn" data-go="saleslog-section"><span class="nav-icon">&#128202;</span> Verkaufsstatistik</button></li>
+    <li><button class="nav-btn" data-go="logs"><span class="nav-icon">&#128466;</span> Logs</button></li>
+    <li><button class="nav-btn" data-go="ota-update-section"><span class="nav-icon">&#128229;</span> Update</button></li>
+  </ul>
+  <button id="theme-toggle">&#9728;&#65039; Hell</button>
+  <div class="footer-info">
+    FW <span id="dyn-version">-</span><br>
+    WebIF <span id="dyn-fs-version" style="color:#888;">-</span><br>
+    Hanimat<br>
+    <a href="https://www.hanimat.at" target="_blank" style="color:#666; text-decoration:none;">www.hanimat.at</a><br>
+    <a href="/logout" style="color:#c00; text-decoration:none; font-weight:600;">&#x23FB; Abmelden</a>
+  </div>
+</nav>
+
+<!-- Content -->
+<div class="main">
+
+  <!-- DASHBOARD -->
+  <section id="dashboard" class="page">
+    <div class="top-bar"><h1>Dashboard</h1></div>
+
+    <div class="stats-grid">
+      <div class="stat-box">
+        <div class="stat-val stat-highlight"><span id="dyn-credit">-</span> EUR</div>
+        <div class="stat-lbl">Aktuelles Guthaben</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-val"><span id="dyn-slots">-/-</span></div>
+        <div class="stat-lbl">Verfügbare Fächer</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-val"><span id="dyn-uptime">-</span></div>
+        <div class="stat-lbl">System Laufzeit</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-val"><span id="dyn-heap" class="stat-heap-ok">-</span> KB</div>
+        <div class="stat-lbl">Freier Heap (Min: <span id="dyn-heap-min">-</span> KB)</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-val" id="dyn-reset-val" style="font-size:0.95rem; word-break:break-word;">-</div>
+        <div class="stat-lbl">Letzter Neustart &nbsp;|&nbsp; Absturz: <span id="dyn-crash-count">0</span>x</div>
+        <div id="dyn-crash-reset" style="display:none; margin-top:0.6rem;">
+          <form action="/resetcrashcount" method="post" style="margin:0;">
+            <button type="submit" style="font-size:0.75rem; padding:4px 10px; background:transparent; border:1px solid #c00; color:#c00; border-radius:6px; cursor:pointer;">&#x21BA; Zähler zurücksetzen</button>
+          </form>
+        </div>
+      </div>
+      <div class="stat-box" style="border:1px solid rgba(255,180,0,0.35); background:rgba(255,180,0,0.07);">
+        <div class="stat-val stat-highlight" style="font-size:1.25rem;"><span id="dyn-cashbox">-</span> EUR</div>
+        <div class="stat-lbl">&#x1F4B0; Kassenstand (Bar)</div>
+      </div>
+    </div>
+
+    <!-- Quick Actions Bar -->
+    <div class="quick-actions">
+      <form action="/addcredit" method="post" style="flex:1; min-width:200px;">
+        <label style="font-size:0.8rem; color:#888; margin-bottom:4px; display:block;">Guthaben simulieren</label>
+        <div style="display:flex; gap:10px;">
+          <input type="number" step="0.01" name="amount" placeholder="Betrag" required style="margin:0;">
+          <button type="submit" class="btn-main" style="width:auto; margin:0;">Go</button>
+        </div>
+      </form>
+      <form action="/resetcredit" method="post">
+        <button type="submit" class="btn-sec" style="border-color:var(--danger); color:var(--danger);">Reset &euro;</button>
+      </form>
+      <form action="/resetcashbox" method="post" data-confirm="Kassenstand auf 0 setzen?" style="margin:0;">
+        <button type="submit" class="btn-sec" style="color:#f0a000; border-color:#f0a000;">&#x1F4B0; Kasse geleert</button>
+      </form>
+      <form action="/refillall" method="post" style="flex:1;">
+        <button type="submit" class="btn-sec">Alle Auffüllen</button>
+      </form>
+      <form action="/triggerallrelays" method="post" style="flex:1;">
+        <button type="submit" class="btn-sec">Relais Test</button>
+      </form>
+    </div>
+
+    <h2>Fach Status &amp; Steuerung</h2>
+    <div class="slots-grid" id="slots-grid">
+      <div style="color:var(--text-sec); padding:1rem;">Lade Daten...</div>
+    </div>
+  </section>
+
+  <!-- CONFIG SLOTS -->
+  <section id="slots-config" class="page" style="display:none;">
+    <div class="top-bar"><h1>Slot Konfiguration</h1></div>
+    <div class="stat-box" style="max-width:500px; margin-bottom:2rem;">
+      <form action="/updateslots" method="post">
+        <div class="input-group">
+          <label>Anzahl aktiver Fächer</label>
+          <input type="number" name="maxSlots" value="" min="1" max="16" required>
+        </div>
+        <button type="submit" class="btn-main">Anzahl Speichern</button>
+      </form>
+    </div>
+
+    <h2>Preise Einstellen</h2>
+    <div style="display:flex; gap:10px; align-items:flex-end; margin-bottom:1.5rem; flex-wrap:wrap;">
+      <div class="input-group" style="margin:0; flex:1; min-width:140px; max-width:200px;">
+        <label style="font-size:0.8rem;">Gleicher Preis für alle</label>
+        <input type="number" id="bulkPrice" step="0.01" min="0" placeholder="z.B. 5.00" style="margin:0;">
+      </div>
+      <button type="button" data-action="apply-bulk" class="btn-sec" style="height:46px; white-space:nowrap;">&#128256; Alle übernehmen</button>
+    </div>
+
+    <form action="/updateprice" method="post" id="priceForm">
+      <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(130px,1fr)); gap:8px; margin-bottom:1.5rem;">
+        <!-- Slot price inputs loaded via /api/status or left blank for manual entry -->
+        <p style="color:var(--text-sec); font-size:0.85rem;">Bitte Preise eingeben und speichern.</p>
+      </div>
+      <button type="submit" class="btn-main">&#128190; Alle Preise Speichern</button>
+    </form>
+  </section>
+
+  <!-- CONFIG DISPLAY -->
+  <section id="display-config" class="page" style="display:none;">
+    <div class="top-bar"><h1>Display Texte</h1></div>
+    <div class="stat-box" style="max-width:600px;">
+      <form action="/savedisplayconfig" method="post">
+        <div class="input-group">
+          <label>Slogan (Zeile 1)</label>
+          <input type="text" name="slogan" value="" maxlength="24">
+        </div>
+        <div class="input-group">
+          <label>Footer (Zeile 2)</label>
+          <input type="text" name="footer" value="" maxlength="30">
+        </div>
+        <div class="check-row" style="margin-bottom:1.2rem;">
+          <input type="checkbox" name="display_white_mode" id="display_white_mode" value="1">
+          <label for="display_white_mode">White Mode (heller Hintergrund auf dem TFT-Display)</label>
+        </div>
+        <button type="submit" class="btn-main">Texte &amp; Design übernehmen</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- CONFIG TIMING -->
+  <section id="timing-config" class="page" style="display:none;">
+    <div class="top-bar"><h1>Zeitsteuerung</h1></div>
+    <div class="stat-box">
+      <form action="/savetimingconfig" method="post">
+
+        <p class="timing-section-title">&#127981; Münzakzeptor</p>
+        <div class="timing-grid">
+          <div class="input-group">
+            <div class="timing-label">
+              Münzeinwurf Verzögerung
+              <span class="unit">ms</span>
+              <i class="info-icon">i<span class="tip">Wartezeit nach dem Einwurf einer Münze, bevor die Impulse ausgewertet werden. Bei Rauschproblemen oder Fehlzählungen erhöhen. Standardwert: 150 ms</span></i>
+            </div>
+            <input type="number" name="coin_delay" min="0" max="5000" value="">
+          </div>
+        </div>
+
+        <p class="timing-section-title">&#128181; Scheinakzeptor</p>
+        <div class="timing-grid">
+          <div class="input-group">
+            <div class="timing-label">
+              Entprellzeit Scheineinwurf
+              <span class="unit">ms</span>
+              <i class="info-icon">i<span class="tip">Mindestabstand zwischen zwei Impuls-Flanken des Scheinprüfers. Verhindert Doppelzählungen durch Prellen. Standardwert: 75 ms</span></i>
+            </div>
+            <input type="number" name="bill_isr_debounce" min="0" max="500" value="">
+          </div>
+          <div class="input-group">
+            <div class="timing-label">
+              Scheingruppen Timeout
+              <span class="unit">ms</span>
+              <i class="info-icon">i<span class="tip">Wartezeit nach dem letzten Impuls eines Scheins, bis der Gesamtwert verarbeitet wird. Muss größer sein als die Lücke zwischen den Impulsen eines Scheins. Standardwert: 1500 ms</span></i>
+            </div>
+            <input type="number" name="bill_group_timeout" min="100" max="10000" value="">
+          </div>
+        </div>
+
+        <p class="timing-section-title">&#9881; Ausgabe &amp; Bedienung</p>
+        <div class="timing-grid">
+          <div class="input-group">
+            <div class="timing-label">
+              Relais Ausgabezeit
+              <span class="unit">ms</span>
+              <i class="info-icon">i<span class="tip">Wie lange das Ausgabe-Relais aktiviert bleibt (= Motorlaufzeit). Zu kurz &rarr; Produkt wird nicht ausgegeben. Standardwert: 5000 ms</span></i>
+            </div>
+            <input type="number" name="disp_time" min="500" max="30000" value="">
+          </div>
+          <div class="input-group">
+            <div class="timing-label">
+              Tastatureingabe Timeout
+              <span class="unit">ms</span>
+              <i class="info-icon">i<span class="tip">Wartezeit auf eine zweite Ziffer nach dem ersten Tastendruck. Standardwert: 3000 ms</span></i>
+            </div>
+            <input type="number" name="keypad_time" min="500" max="15000" value="">
+          </div>
+          <div class="input-group">
+            <div class="timing-label">
+              Fachauswahl Timeout
+              <span class="unit">ms</span>
+              <i class="info-icon">i<span class="tip">Wie lange ein gewähltes Fach aktiv bleibt, ohne dass der Kauf bestätigt wird. Standardwert: 10000 ms</span></i>
+            </div>
+            <input type="number" name="slot_sel_time" min="2000" max="60000" value="">
+          </div>
+          <div class="input-group">
+            <div class="timing-label">
+              Display Ruhemodus
+              <span class="unit">ms</span>
+              <i class="info-icon">i<span class="tip">Nach dieser Inaktivitätsdauer kehrt das Display automatisch zum Startbildschirm zurück. Standardwert: 20000 ms</span></i>
+            </div>
+            <input type="number" name="disp_timeout" min="5000" max="300000" value="">
+          </div>
+        </div>
+
+        <p class="timing-section-title">&#128274; Web-Interface</p>
+        <div class="timing-grid">
+          <div class="input-group">
+            <div class="timing-label">
+              Sitzungs Timeout
+              <span class="unit">Sekunden</span>
+              <i class="info-icon">i<span class="tip">Nach dieser Zeit ohne Aktivität im Web-Interface wird die Anmeldung automatisch beendet. Standardwert: 600 s</span></i>
+            </div>
+            <input type="number" name="web_timeout" min="30" max="86400" value="">
+          </div>
+        </div>
+
+        <p class="timing-section-title">&#128200; System</p>
+        <label class="check-row">
+          <input type="checkbox" name="status_enabled">
+          <div>
+            <div style="font-weight:600;">&#128268; Status-Ping aktiviert</div>
+            <div style="font-size:0.8rem; color:var(--text-sec); margin-top:2px;">Sendet alle 60 Minuten einen anonymen Heartbeat an hanimat.at. Wird für Systemüberwachung genutzt.</div>
+          </div>
+        </label>
+
+        <button type="submit" class="btn-main" style="margin-top:2rem;">Einstellungen Speichern</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- CONFIG TELEGRAM -->
+  <section id="telegram-config" class="page" style="display:none;">
+    <div class="top-bar"><h1>Telegram</h1></div>
+    <div class="stat-box">
+      <form action="/savetelegramconfig" method="post">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:1.5rem;">
+          <label class="check-row" style="margin-bottom:0; flex-shrink:0;">
+            <input type="checkbox" name="tg_enabled">
+            <b>Telegram Integration Aktivieren</b>
+          </label>
+          <a href="https://hanimat.at/telegram.html" target="_blank" style="color:var(--brand); text-decoration:none; font-size:0.8rem; background:rgba(255,159,28,0.1); padding:5px 12px; border-radius:8px; border:1px solid rgba(255,159,28,0.3);">
+            &#128214; Setup-Anleitung
+          </a>
+        </div>
+        <p class="timing-section-title">&#128272; Bot-Zugangsdaten</p>
+        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap:1.5rem;">
+          <div class="input-group">
+            <div class="timing-label">Bot Token
+              <i class="info-icon">i<span class="tip">Den Token erhältst du vom @BotFather auf Telegram.</span></i>
+            </div>
+            <input type="password" name="tg_token" value="">
+          </div>
+          <div class="input-group">
+            <div class="timing-label">Chat ID
+              <i class="info-icon">i<span class="tip">Die numerische ID deines Chats. Mit @userinfobot herausfinden.</span></i>
+            </div>
+            <input type="text" name="tg_chat_id" value="">
+          </div>
+        </div>
+        <p class="timing-section-title">&#128276; Benachrichtigungen</p>
+        <label class="check-row">
+          <input type="checkbox" name="notify_sale">
+          <div><div style="font-weight:600;">&#127815; Verkauf</div><div style="font-size:0.8rem; color:var(--text-sec); margin-top:2px;">Nachricht bei jedem erfolgreichen Kauf</div></div>
+        </label>
+        <label class="check-row" style="margin-top:0.5rem;">
+          <input type="checkbox" name="notify_almost_empty">
+          <div><div style="font-weight:600;">&#9888;&#65039; Fast leer</div><div style="font-size:0.8rem; color:var(--text-sec); margin-top:2px;">Warnung wenn die Restmenge den Schwellwert erreicht</div></div>
+        </label>
+        <div style="margin-left:44px; margin-top:0.4rem; margin-bottom:0.8rem;">
+          <div class="timing-label" style="margin-bottom:0.4rem;">Schwellwert (Stück)</div>
+          <input type="number" name="almost_empty_threshold" min="1" max="50" value="" style="max-width:140px;">
+        </div>
+        <label class="check-row" style="margin-top:0.5rem;">
+          <input type="checkbox" name="notify_empty">
+          <div><div style="font-weight:600;">&#128683; Fach leer</div><div style="font-size:0.8rem; color:var(--text-sec); margin-top:2px;">Meldung wenn ein Fach vollständig leer ist</div></div>
+        </label>
+        <label class="check-row" style="margin-top:0.5rem;">
+          <input type="checkbox" name="notify_crash">
+          <div><div style="font-weight:600;">&#128680; Absturz / Neustart</div><div style="font-size:0.8rem; color:var(--text-sec); margin-top:2px;">Benachrichtigung bei unerwartetem Neustart</div></div>
+        </label>
+        <label class="check-row" style="margin-top:0.5rem;">
+          <input type="checkbox" name="notify_bruteforce">
+          <div><div style="font-weight:600;">&#128272; Brute-Force Angriff</div><div style="font-size:0.8rem; color:var(--text-sec); margin-top:2px;">Benachrichtigung bei zu vielen fehlerhaften Login-Versuchen</div></div>
+        </label>
+        <button type="submit" class="btn-main" style="margin-top:1.5rem;">Einstellungen Speichern</button>
+      </form>
+      <form action="/sendtesttelegram" method="post" style="margin-top:1.5rem; border-top:1px solid var(--border); padding-top:1.5rem;">
+        <p style="color:var(--text-sec); font-size:0.85rem; margin:0 0 1rem 0;">Sendet eine Test-Nachricht an die oben eingetragene Chat ID.</p>
+        <button type="submit" class="btn-sec">&#9992;&#65039; Test-Nachricht Senden</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- CONFIG SUMUP -->
+  <section id="sumup-config" class="page" style="display:none;">
+    <div class="top-bar"><h1>SumUp Terminal</h1></div>
+    <div class="stat-box">
+      <form action="/savesumup" method="post">
+        <label class="check-row">
+          <input type="checkbox" name="enabled">
+          <b>SumUp Aktiviert</b>
+        </label>
+        <div class="input-group"><label>API Key</label><input type="password" name="apiKey" value=""></div>
+        <div class="input-group"><label>Merchant ID</label><input type="text" name="merchantId" value=""></div>
+        <div class="input-group"><label>Reader ID</label><input type="text" name="readerId" value=""></div>
+        <div class="input-group"><label>Timeout (s)</label><input type="number" name="timeout" value="" min="10"></div>
+        <button type="submit" class="btn-main">Speichern</button>
+      </form>
+      <h2 style="margin-top:2rem;">Pairing</h2>
+      <div style="background:rgba(255,255,255,0.05); padding:1.5rem; border-radius:10px;">
+        <form action="/pairsumup" method="post" style="margin-bottom:1rem;">
+          <div style="display:flex; gap:10px;">
+            <input type="text" name="code" placeholder="Code (8-stellig)" style="margin:0;">
+            <button type="submit" class="btn-sec" style="width:auto; margin:0;">Koppeln</button>
+          </div>
+        </form>
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+          <form action="/checksumup" method="get">
+            <button type="submit" class="btn-sec">&#128268; Reader prüfen</button>
+          </form>
+          <form action="/disconnectsumup" method="post">
+            <button type="submit" class="btn-sec" style="color:var(--danger); border-color:var(--danger);">Entkoppeln (Reset)</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CONFIG NETWORK -->
+  <section id="network-config" class="page" style="display:none;">
+    <div class="top-bar"><h1>Netzwerk</h1></div>
+    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap:1rem; margin-bottom:1.5rem;">
+      <div class="stat-box" style="padding:1rem;">
+        <div class="stat-lbl">IP-Adresse</div>
+        <div style="font-size:1.1rem; font-weight:700; color:var(--success); margin-top:4px;" id="dyn-ip-net">-</div>
+      </div>
+    </div>
+    <div class="stat-box">
+      <form action="/setstaticip" method="post" id="netForm">
+        <p class="timing-section-title" style="margin-top:0;">&#127758; IP-Konfiguration</p>
+        <div style="display:flex; gap:0.75rem; margin-bottom:1.5rem;">
+          <button type="button" id="btnDhcp" data-action="set-net" data-mode="dhcp"
+            style="flex:1; padding:0.75rem; border-radius:10px; border:2px solid; cursor:pointer; font-weight:700; font-size:0.9rem; transition:0.2s; background:var(--success);color:#000;border-color:var(--success);">
+            &#127760; DHCP
+          </button>
+          <button type="button" id="btnStatic" data-action="set-net" data-mode="static"
+            style="flex:1; padding:0.75rem; border-radius:10px; border:2px solid; cursor:pointer; font-weight:700; font-size:0.9rem; transition:0.2s; background:transparent;color:var(--text-sec);border-color:var(--border);">
+            &#128204; Statische IP
+          </button>
+        </div>
+        <div id="staticFields" style="display:none;">
+          <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:1.5rem;">
+            <div class="input-group"><div class="timing-label">IP-Adresse</div>
+              <input type="text" id="inp_static_ip" name="static_ip" placeholder="z.B. 192.168.1.100" value=""></div>
+            <div class="input-group"><div class="timing-label">Gateway</div>
+              <input type="text" name="gateway" placeholder="z.B. 192.168.1.1" value=""></div>
+            <div class="input-group"><div class="timing-label">Subnetzmaske</div>
+              <input type="text" name="subnet" placeholder="255.255.255.0" value=""></div>
+            <div class="input-group"><div class="timing-label">DNS-Server</div>
+              <input type="text" name="dns1" placeholder="8.8.8.8" value=""></div>
+          </div>
+        </div>
+        <div style="display:flex; gap:1rem; margin-top:1.5rem; flex-wrap:wrap;">
+          <button type="submit" class="btn-main" style="flex:1; min-width:180px;">&#128190; Speichern &amp; Neustart</button>
+        </div>
+        <p style="color:var(--text-sec); font-size:0.8rem; margin:0.8rem 0 0 0;">&#9888;&#65039; Nach dem Speichern startet der Automat neu.</p>
+      </form>
+    </div>
+
+    <!-- WLAN wechseln -->
+    <div class="stat-box" style="margin-top:1rem;">
+      <p class="timing-section-title" style="margin-top:0;">&#128246; WLAN wechseln</p>
+      <p style="color:var(--text-sec); font-size:0.82rem; margin:0 0 1.2rem 0;">
+        Nach dem Speichern verbindet sich der Automat mit dem neuen Netz und startet neu.<br>
+        Falls das Netz nicht erreichbar ist, wechselt er automatisch in den Setup-Modus<br>
+        (AP: <b>HANIMAT-Setup</b> &middot; Passwort: <b>Honig1234</b>).
+      </p>
+      <form action="/setwifi" method="post" data-confirm="WLAN wirklich wechseln? Das Gerät startet neu.">
+        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:1.5rem; margin-bottom:1.2rem;">
+          <div class="input-group">
+            <div class="timing-label">SSID (Netzwerkname)</div>
+            <input type="text" name="ssid" placeholder="Mein WLAN" required autocomplete="off">
+          </div>
+          <div class="input-group">
+            <div class="timing-label">Passwort</div>
+            <input type="password" name="pass" placeholder="••••••••" autocomplete="new-password">
+          </div>
+        </div>
+        <button type="submit" class="btn-main" style="width:auto;">&#128246; Verbinden &amp; Neustart</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- CONFIG PASSWORD -->
+  <section id="password-config" class="page" style="display:none;">
+    <div class="top-bar"><h1>Sicherheit</h1></div>
+    <div class="stat-box" style="max-width:500px;">
+      <form action="/changepassword" method="post">
+        <div class="input-group">
+          <label>Neues Admin Passwort</label>
+          <input type="password" name="newPassword" required minlength="4" placeholder="****">
+        </div>
+        <button type="submit" class="btn-main">Passwort &auml;ndern</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- LOGS -->
+  <section id="logs" class="page" style="display:none;">
+    <div class="top-bar"><h1>System Logs</h1></div>
+    <div class="stat-box">
+      <div id="log-output">Lade Daten...</div>
+    </div>
+  </section>
+
+  <!-- UPDATE -->
+  <section id="ota-update-section" class="page" style="display:none;">
+    <div class="top-bar"><h1>Firmware Update</h1></div>
+    <div class="stat-box">
+      <h2>Online Update</h2>
+      <div style="background:rgba(255,255,255,0.05); padding:1.5rem; border-radius:10px; margin-bottom:2rem;">
+        <div id="online-update-status" style="margin-bottom:1rem; color:var(--text-sec); font-size:0.9rem;">Status: Warte auf Prüfung...</div>
+        <div id="update-version-table" style="display:none; margin-bottom:1rem; font-size:0.85rem; line-height:1.8;">
+          <div><span style="color:var(--text-sec); display:inline-block; width:130px;">Firmware installiert:</span> <span id="uv-fw-inst">-</span></div>
+          <div><span style="color:var(--text-sec); display:inline-block; width:130px;">Firmware verfügbar:</span>  <span id="uv-fw-online">-</span></div>
+          <div><span style="color:var(--text-sec); display:inline-block; width:130px;">WebIF installiert:</span>   <span id="uv-fs-inst">-</span></div>
+          <div><span style="color:var(--text-sec); display:inline-block; width:130px;">WebIF verfügbar:</span>     <span id="uv-fs-online">-</span></div>
+        </div>
+        <div id="update-changelog" style="display:none; background:rgba(255,159,28,0.07); border-left:3px solid var(--brand); padding:0.75rem 1rem; border-radius:6px; margin-bottom:1rem; font-size:0.83rem; color:var(--text-sec); white-space:pre-line;"></div>
+        <div style="display:flex; gap:1rem; flex-wrap:wrap;">
+          <button data-action="check-update" class="btn-sec" style="width:auto;">&#128269; Version prüfen</button>
+          <button id="full-update-btn" data-action="full-update" class="btn-main" style="width:auto; display:none;">&#128640; Alles aktualisieren</button>
+        </div>
+      </div>
+
+      <h2>Datei Upload</h2>
+      <div style="display:flex; gap:1.5rem; margin-bottom:1rem;">
+        <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+          <input type="radio" name="upload-type" value="firmware" checked onchange="setUploadType(this)">
+          <span>Firmware</span>
+        </label>
+        <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+          <input type="radio" name="upload-type" value="fs" onchange="setUploadType(this)">
+          <span>LittleFS (Web-Interface)</span>
+        </label>
+      </div>
+      <form id="ota-upload-form" method="POST" action="/ota-upload" enctype="multipart/form-data">
+        <div class="input-group">
+          <input type="file" name="update" accept=".bin" required style="padding:1rem;">
+        </div>
+        <button type="submit" class="btn-main">Upload &amp; Flash</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- VERKAUFSSTATISTIK -->
+  <section id="saleslog-section" class="page" style="display:none;">
+    <div class="top-bar"><h1>&#128202; Verkaufsstatistik</h1></div>
+
+    <!-- Summary Cards -->
+    <div class="stats-grid" style="margin-bottom:1.5rem; grid-template-columns:repeat(auto-fit,minmax(130px,1fr));">
+      <div class="stat-box" style="text-align:center;">
+        <div class="stat-val stat-highlight" style="font-size:1.4rem;" id="sl-revenue">- &euro;</div>
+        <div class="stat-lbl">Gesamtumsatz</div>
+      </div>
+      <div class="stat-box" style="text-align:center;">
+        <div class="stat-val" style="font-size:1.4rem;" id="sl-total-sales">-</div>
+        <div class="stat-lbl">Verkäufe gesamt</div>
+      </div>
+      <div class="stat-box" style="text-align:center;">
+        <div class="stat-val" id="sl-cash" style="font-size:1.4rem; color:var(--brand);">-</div>
+        <div class="stat-lbl">&#x1F4B5; Bar (letzte 50)</div>
+      </div>
+      <div class="stat-box" style="text-align:center;">
+        <div class="stat-val" id="sl-card" style="font-size:1.4rem; color:#00b478;">-</div>
+        <div class="stat-lbl">&#x1F4B3; Karte (letzte 50)</div>
+      </div>
+      <div class="stat-box" style="text-align:center; border:1px solid rgba(255,180,0,0.35); background:rgba(255,180,0,0.07);">
+        <div class="stat-val stat-highlight" style="font-size:1.4rem;" id="sl-cashbox">- &euro;</div>
+        <div class="stat-lbl">&#x1F4B0; Kassenstand</div>
+      </div>
+    </div>
+
+    <!-- Action Buttons -->
+    <div style="display:flex; gap:0.6rem; flex-wrap:wrap; margin-bottom:1.25rem;">
+      <form action="/resetcashbox" method="post" data-confirm="Kassenstand wirklich auf 0 setzen?" style="margin:0;">
+        <button type="submit" class="btn-sec" style="color:#f0a000; border-color:#f0a000; width:auto; padding:0.4rem 1rem; font-size:0.82rem;">&#x1F4B0; Kasse geleert</button>
+      </form>
+      <form action="/resetsalesstats" method="post" data-confirm="Alle Verkaufsstatistiken wirklich löschen?" style="margin:0;">
+        <button type="submit" class="btn-sec" style="color:var(--danger); border-color:var(--danger); width:auto; padding:0.4rem 1rem; font-size:0.82rem;">&#128465; Statistik löschen</button>
+      </form>
+    </div>
+
+    <!-- Sales Table -->
+    <div class="stat-box">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem; flex-wrap:wrap; gap:0.5rem;">
+        <div style="font-weight:700; font-size:0.9rem;">Letzte Verkäufe <span id="sl-count-label" style="font-weight:400; color:var(--text-sec); font-size:0.8rem;"></span></div>
+        <div style="font-size:0.75rem; color:var(--text-sec); background:rgba(255,255,255,0.06); padding:3px 10px; border-radius:8px;">max. 50 Einträge</div>
+      </div>
+      <div style="overflow-x:auto;">
+        <table id="sales-table" style="width:100%; border-collapse:collapse; font-size:0.87rem;">
+          <thead>
+            <tr style="color:var(--text-sec); border-bottom:2px solid var(--border);">
+              <th style="text-align:left; padding:8px 10px; font-weight:600;">Zeit</th>
+              <th style="text-align:center; padding:8px 10px; font-weight:600;">Fach</th>
+              <th style="text-align:right; padding:8px 10px; font-weight:600;">Preis</th>
+              <th style="text-align:center; padding:8px 10px; font-weight:600;">Zahlung</th>
+            </tr>
+          </thead>
+          <tbody id="sales-tbody">
+            <tr><td colspan="4" style="padding:1.5rem; color:var(--text-sec); text-align:center;">Lade Daten...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div id="sales-empty" style="display:none; text-align:center; color:var(--text-sec); padding:2rem; font-size:0.9rem;">&#128203; Noch keine Verkäufe</div>
+    </div>
+  </section>
+
+  <!-- CONFIG ZAHLUNGS-PULSE -->
+  <section id="payment-config" class="page" style="display:none;">
+    <div class="top-bar"><h1>&#x1F4B1; Zahlungs-Setup</h1></div>
+    <form action="/savepaymentconfig" method="post">
+
+      <!-- Zahlungskanäle -->
+      <div class="stat-box" style="margin-bottom:1rem;">
+        <h2 style="margin:0 0 1rem 0; font-size:1rem; color:var(--text-sec); font-weight:600; letter-spacing:0.04em; text-transform:uppercase;">&#x26A1; Zahlungskanäle</h2>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem;">
+          <label style="display:flex; flex-direction:column; align-items:center; gap:0.5rem; border:2px solid var(--border); border-radius:12px; padding:1.25rem 1rem; cursor:pointer;">
+            <span style="font-size:2rem;">&#x1FA99;</span>
+            <span style="font-weight:700; font-size:0.95rem;">Münzprüfer</span>
+            <input type="checkbox" name="coinEnabled" style="width:1.2rem; height:1.2rem; accent-color:var(--brand); margin:0;">
+          </label>
+          <label style="display:flex; flex-direction:column; align-items:center; gap:0.5rem; border:2px solid var(--border); border-radius:12px; padding:1.25rem 1rem; cursor:pointer;">
+            <span style="font-size:2rem;">&#x1F4B5;</span>
+            <span style="font-weight:700; font-size:0.95rem;">Scheinprüfer</span>
+            <input type="checkbox" name="billEnabled" style="width:1.2rem; height:1.2rem; accent-color:var(--brand); margin:0;">
+          </label>
+        </div>
+      </div>
+
+      <!-- Münzprüfer Pulse -->
+      <div class="stat-box" style="margin-bottom:1rem;">
+        <h2 style="margin:0 0 0.25rem 0; font-size:1rem; color:var(--text-sec); font-weight:600; letter-spacing:0.04em; text-transform:uppercase;">&#x1FA99; Münzprüfer &mdash; Münze &rarr; Pulse</h2>
+        <p style="color:var(--text-sec); font-size:0.8rem; margin:0 0 1rem 0;">Pulse-Anzahl je Münze. 0 = nicht aktiv.</p>
+        <div style="display:flex; flex-direction:column; gap:0.6rem;">
+          <div style="display:flex; align-items:center; gap:1rem; background:rgba(255,255,255,0.03); border:1px solid var(--border); border-radius:10px; padding:0.65rem 1rem;">
+            <span style="background:#b87333; color:#111; font-weight:800; font-size:0.85rem; border-radius:8px; padding:0.3rem 0.6rem; min-width:3rem; text-align:center; display:inline-block;">1 Ct</span>
+            <input type="number" name="coin_1" value="" min="0" max="6" style="width:4.5rem; text-align:center; font-size:1rem; font-weight:700; padding:0.3rem 0.4rem; margin:0;" placeholder="0">
+          </div>
+          <div style="display:flex; align-items:center; gap:1rem; background:rgba(255,255,255,0.03); border:1px solid var(--border); border-radius:10px; padding:0.65rem 1rem;">
+            <span style="background:#b87333; color:#111; font-weight:800; font-size:0.85rem; border-radius:8px; padding:0.3rem 0.6rem; min-width:3rem; text-align:center; display:inline-block;">2 Ct</span>
+            <input type="number" name="coin_2" value="" min="0" max="6" style="width:4.5rem; text-align:center; font-size:1rem; font-weight:700; padding:0.3rem 0.4rem; margin:0;" placeholder="0">
+          </div>
+          <div style="display:flex; align-items:center; gap:1rem; background:rgba(255,255,255,0.03); border:1px solid var(--border); border-radius:10px; padding:0.65rem 1rem;">
+            <span style="background:#b87333; color:#111; font-weight:800; font-size:0.85rem; border-radius:8px; padding:0.3rem 0.6rem; min-width:3rem; text-align:center; display:inline-block;">5 Ct</span>
+            <input type="number" name="coin_5" value="" min="0" max="6" style="width:4.5rem; text-align:center; font-size:1rem; font-weight:700; padding:0.3rem 0.4rem; margin:0;" placeholder="0">
+          </div>
+          <div style="display:flex; align-items:center; gap:1rem; background:rgba(255,255,255,0.03); border:1px solid var(--border); border-radius:10px; padding:0.65rem 1rem;">
+            <span style="background:#c8a951; color:#111; font-weight:800; font-size:0.85rem; border-radius:8px; padding:0.3rem 0.6rem; min-width:3rem; text-align:center; display:inline-block;">10 Ct</span>
+            <input type="number" name="coin_10" value="" min="0" max="6" style="width:4.5rem; text-align:center; font-size:1rem; font-weight:700; padding:0.3rem 0.4rem; margin:0;" placeholder="0">
+          </div>
+          <div style="display:flex; align-items:center; gap:1rem; background:rgba(255,255,255,0.03); border:1px solid var(--border); border-radius:10px; padding:0.65rem 1rem;">
+            <span style="background:#c8a951; color:#111; font-weight:800; font-size:0.85rem; border-radius:8px; padding:0.3rem 0.6rem; min-width:3rem; text-align:center; display:inline-block;">20 Ct</span>
+            <input type="number" name="coin_20" value="" min="0" max="6" style="width:4.5rem; text-align:center; font-size:1rem; font-weight:700; padding:0.3rem 0.4rem; margin:0;" placeholder="0">
+          </div>
+          <div style="display:flex; align-items:center; gap:1rem; background:rgba(255,255,255,0.03); border:1px solid var(--border); border-radius:10px; padding:0.65rem 1rem;">
+            <span style="background:#c8a951; color:#111; font-weight:800; font-size:0.85rem; border-radius:8px; padding:0.3rem 0.6rem; min-width:3rem; text-align:center; display:inline-block;">50 Ct</span>
+            <input type="number" name="coin_50" value="" min="0" max="6" style="width:4.5rem; text-align:center; font-size:1rem; font-weight:700; padding:0.3rem 0.4rem; margin:0;" placeholder="0">
+          </div>
+          <div style="display:flex; align-items:center; gap:1rem; background:rgba(255,255,255,0.03); border:1px solid var(--border); border-radius:10px; padding:0.65rem 1rem;">
+            <span style="background:#c0c0c0; color:#111; font-weight:800; font-size:0.85rem; border-radius:8px; padding:0.3rem 0.6rem; min-width:3rem; text-align:center; display:inline-block;">1 &euro;</span>
+            <input type="number" name="coin_100" value="" min="0" max="6" style="width:4.5rem; text-align:center; font-size:1rem; font-weight:700; padding:0.3rem 0.4rem; margin:0;" placeholder="0">
+          </div>
+          <div style="display:flex; align-items:center; gap:1rem; background:rgba(255,255,255,0.03); border:1px solid var(--border); border-radius:10px; padding:0.65rem 1rem;">
+            <span style="background:#d4d4d4; color:#111; font-weight:800; font-size:0.85rem; border-radius:8px; padding:0.3rem 0.6rem; min-width:3rem; text-align:center; display:inline-block;">2 &euro;</span>
+            <input type="number" name="coin_200" value="" min="0" max="6" style="width:4.5rem; text-align:center; font-size:1rem; font-weight:700; padding:0.3rem 0.4rem; margin:0;" placeholder="0">
+          </div>
+        </div>
+        <p style="color:var(--text-sec); font-size:0.75rem; margin:0.75rem 0 0 0;">&#9432; Pulse = 0 bedeutet: diese Münze wird nicht akzeptiert.</p>
+      </div>
+
+      <!-- Scheinprüfer Pulse -->
+      <div class="stat-box" style="margin-bottom:1.5rem;">
+        <h2 style="margin:0 0 0.25rem 0; font-size:1rem; color:var(--text-sec); font-weight:600; letter-spacing:0.04em; text-transform:uppercase;">&#x1F4B5; Scheinprüfer &mdash; Schein &rarr; Pulse</h2>
+        <p style="color:var(--text-sec); font-size:0.8rem; margin:0 0 1rem 0;">Pulse-Anzahl je Schein. 0 = nicht aktiv.</p>
+        <div style="display:flex; flex-direction:column; gap:0.6rem;">
+          <div style="display:flex; align-items:center; gap:1rem; background:rgba(255,255,255,0.03); border:1px solid var(--border); border-radius:10px; padding:0.65rem 1rem;">
+            <span style="background:#4ade80; color:#111; font-weight:800; font-size:0.9rem; border-radius:8px; padding:0.3rem 0.7rem; min-width:3.2rem; text-align:center; display:inline-block;">5 &euro;</span>
+            <input type="number" name="bill_5" value="" min="0" max="16" style="width:4.5rem; text-align:center; font-size:1rem; font-weight:700; padding:0.3rem 0.4rem; margin:0;" placeholder="0">
+          </div>
+          <div style="display:flex; align-items:center; gap:1rem; background:rgba(255,255,255,0.03); border:1px solid var(--border); border-radius:10px; padding:0.65rem 1rem;">
+            <span style="background:#34d399; color:#111; font-weight:800; font-size:0.9rem; border-radius:8px; padding:0.3rem 0.7rem; min-width:3.2rem; text-align:center; display:inline-block;">10 &euro;</span>
+            <input type="number" name="bill_10" value="" min="0" max="16" style="width:4.5rem; text-align:center; font-size:1rem; font-weight:700; padding:0.3rem 0.4rem; margin:0;" placeholder="0">
+          </div>
+          <div style="display:flex; align-items:center; gap:1rem; background:rgba(255,255,255,0.03); border:1px solid var(--border); border-radius:10px; padding:0.65rem 1rem;">
+            <span style="background:#60a5fa; color:#111; font-weight:800; font-size:0.9rem; border-radius:8px; padding:0.3rem 0.7rem; min-width:3.2rem; text-align:center; display:inline-block;">20 &euro;</span>
+            <input type="number" name="bill_20" value="" min="0" max="16" style="width:4.5rem; text-align:center; font-size:1rem; font-weight:700; padding:0.3rem 0.4rem; margin:0;" placeholder="0">
+          </div>
+          <div style="display:flex; align-items:center; gap:1rem; background:rgba(255,255,255,0.03); border:1px solid var(--border); border-radius:10px; padding:0.65rem 1rem;">
+            <span style="background:#f59e0b; color:#111; font-weight:800; font-size:0.9rem; border-radius:8px; padding:0.3rem 0.7rem; min-width:3.2rem; text-align:center; display:inline-block;">50 &euro;</span>
+            <input type="number" name="bill_50" value="" min="0" max="16" style="width:4.5rem; text-align:center; font-size:1rem; font-weight:700; padding:0.3rem 0.4rem; margin:0;" placeholder="0">
+          </div>
+          <div style="display:flex; align-items:center; gap:1rem; background:rgba(255,255,255,0.03); border:1px solid var(--border); border-radius:10px; padding:0.65rem 1rem;">
+            <span style="background:#f87171; color:#111; font-weight:800; font-size:0.9rem; border-radius:8px; padding:0.3rem 0.7rem; min-width:3.2rem; text-align:center; display:inline-block;">100 &euro;</span>
+            <input type="number" name="bill_100" value="" min="0" max="16" style="width:4.5rem; text-align:center; font-size:1rem; font-weight:700; padding:0.3rem 0.4rem; margin:0;" placeholder="0">
+          </div>
+        </div>
+        <p style="color:var(--text-sec); font-size:0.75rem; margin:0.75rem 0 0 0;">&#9432; Pulse = 0 bedeutet: dieser Schein wird nicht akzeptiert.</p>
+      </div>
+
+      <button type="submit" class="btn-main" style="width:100%;">&#x1F4BE; Einstellungen speichern</button>
+    </form>
+  </section>
+
+</div> <!-- End Main -->
+
+</body>
+</html>

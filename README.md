@@ -10,7 +10,7 @@
   <a href="https://www.hanimat.at/installer/"><img src="https://img.shields.io/badge/⚡_Web--Installer-Jetzt_flashen-success?style=flat-square" /></a>
   <a href="https://t.me/+igwol5kmQGpiYWFk"><img src="https://img.shields.io/badge/Community-Telegram-2CA5E0?style=flat-square&logo=telegram&logoColor=white" /></a>
   <a href="https://status.hanimat.at"><img src="https://img.shields.io/badge/Live_Status-status.hanimat.at-brightgreen?style=flat-square" /></a>
-  <img src="https://img.shields.io/badge/Firmware-V1.5.0-informational?style=flat-square" />
+  <img src="https://img.shields.io/badge/Firmware-V1.5.2-informational?style=flat-square" />
   <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/"><img src="https://img.shields.io/badge/Lizenz-CC%20BY--NC--SA%204.0-lightgrey?style=flat-square" /></a>
 </p>
 
@@ -251,9 +251,9 @@ HANIMAT unterstützt bargeldloses Bezahlen über ein **SumUp Solo**-Terminal (Ka
 
 Nach der Erstinstallation musst du den Automaten **nie wieder aufschrauben**. Updates werden direkt im Admin-Panel verwaltet:
 
-**Automatisch (empfohlen):** Web-Interface → **System** → **Firmware-Update** → HANIMAT prüft auf neue Version und installiert mit einem Klick.
+**Automatisch (empfohlen):** Web-Interface → **System** → **Firmware-Update** → HANIMAT prüft auf neue Version und installiert Firmware + Web-Interface mit einem Klick. Nach dem Neustart ist alles aktuell.
 
-**Manuell:** Im selben Bereich kann auch eine lokale `firmware.bin` hochgeladen werden – der ESP32 flasht sich selbst und startet automatisch neu (~30 Sekunden).
+**Manuell:** Im selben Bereich können Firmware (`firmware.bin`) und Web-Interface (`littlefs.bin`) auch separat als Datei hochgeladen werden – der ESP32 flasht sich selbst und startet automatisch neu.
 
 ---
 
