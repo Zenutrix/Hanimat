@@ -5,10 +5,7 @@
 //  Wird von main.cpp per #include eingebunden (single translation unit).
 // =================================================================
 
-/**
- * @brief Startet die "Danke"-Melodie (non-blocking).
- *        Die eigentliche Wiedergabe übernimmt processMelody() im Loop.
- */
+/** @brief Startet die "Danke"-Melodie (non-blocking); Wiedergabe übernimmt processMelody(). */
 void playThankYouMelody() {
   melodyActive      = true;
   melodyNoteIndex   = 0;
@@ -17,10 +14,7 @@ void playThankYouMelody() {
   ledcWriteTone(0, MELODY_NOTES[0]); // Erste Note sofort starten
 }
 
-/**
- * @brief Verarbeitet die Melodie-Wiedergabe Note für Note.
- *        Muss jeden Loop-Durchlauf aufgerufen werden.
- */
+/** @brief Verarbeitet die Melodie-Wiedergabe Note für Note; muss jeden Loop-Durchlauf aufgerufen werden. */
 void processMelody() {
   if (!melodyActive) return;
   unsigned long now = millis();
@@ -46,10 +40,7 @@ void processMelody() {
   }
 }
 
-/**
- * @brief Non-blocking beep helper — stoppt den Ton wenn die Zeit abgelaufen ist.
- *        Muss in loop() aufgerufen werden.
- */
+/** @brief Nicht-blockierender Beep-Helfer; stoppt den Ton, wenn die Zeit abgelaufen ist. Muss in loop() laufen. */
 void processSingleBeep() {
   if (!singleBeep.active) return;
   if (millis() >= singleBeep.endTime) {

@@ -6,8 +6,7 @@
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
 
-// Verknüpfung zur Hanimat-Log-Funktion herstellen
-// Diese Funktion muss in der main.cpp existieren
+// Verknüpfung zur Log-Funktion, die in main.cpp definiert ist
 extern void logMessage(const String& msg);
 
 class SumUpController {
@@ -16,7 +15,7 @@ private:
     String merchantId;
     String readerId;
     
-    // Leitet SumUp-Interne Logs an das Hanimat System weiter
+    // Leitet interne SumUp-Logs ans Hanimat-System weiter
     void log(String msg) {
         logMessage("[SumUp Internal] " + msg);
     }
@@ -32,7 +31,7 @@ public:
     String getReaderId() { return readerId; }
 
     // --- PAIRING ---
-    // Verbindet das physische Terminal mit diesem Controller
+    /** @brief Verbindet das physische Terminal mit diesem Controller. */
     String pairReader(const String& pairingCode) {
         if (apiKey.length() < 5 || merchantId.length() < 3) return "";
         WiFiClientSecure client; client.setInsecure();
@@ -66,10 +65,10 @@ public:
         return newId;
     }
 
-// --- READER ENTKOPELLN (API DELETE) ---
-// Löscht die Verknüpfung auf den SumUp Servern und lokal
+// --- READER ENTKOPPELN (API DELETE) ---
+/** @brief Löscht die Verknüpfung auf den SumUp-Servern und lokal. */
 bool unpairReader() {
-    // Wenn keine ID da ist, betrachten wir es als erledigt
+    // Ohne vorhandene ID gilt der Vorgang bereits als erledigt
     if (readerId.length() < 3) {
         log("Keine Reader-ID vorhanden. Überspringe API-Request.");
         readerId = "";
@@ -80,7 +79,7 @@ bool unpairReader() {
     client.setInsecure(); // Verbindung verschlüsselt, Zertifikatskette nicht geprüft
     HTTPClient http;
 
-    // Endpoint: DELETE /merchants/{mid}/readers/{rid}
+    // Endpunkt: DELETE /merchants/{mid}/readers/{rid}
     String url = "https://api.sumup.com/v0.1/merchants/" + merchantId + "/readers/" + readerId;
 
     log("Sende Unpair Request (DELETE) an: " + url);
@@ -99,9 +98,7 @@ bool unpairReader() {
         
         http.end();
 
-        // 204 (No Content) ist der Standard für erfolgreiches Löschen
-        // 200 (OK) wird ebenfalls oft zurückgegeben
-        // 404 (Not Found) bedeutet, er ist schon gelöscht -> also auch Erfolg für uns
+        // 204/200 = erfolgreich gelöscht, 404 = war schon gelöscht -> ebenfalls Erfolg
         if (httpCode == 204 || httpCode == 200 || httpCode == 404) {
             log("Unpair erfolgreich (Code: " + String(httpCode) + ")");
             readerId = ""; // Lokal löschen
@@ -109,7 +106,7 @@ bool unpairReader() {
         } else {
             log("Unpair API Fehler: " + String(httpCode) + " Resp: " + response);
             
-            // Wir löschen die ID lokal trotzdem, damit das System nicht blockiert
+            // ID trotzdem lokal löschen, damit das System nicht blockiert
             readerId = ""; 
             return false; 
         }
@@ -120,8 +117,7 @@ bool unpairReader() {
     }
 }
     // --- READER STATUS PRÜFEN ---
-    // Prüft ob die gespeicherte Reader-ID noch auf SumUp's Servern existiert.
-    // Gibt true zurück wenn der Reader aktiv/bekannt ist, false bei 404 oder Fehler.
+    /** @brief Prüft, ob die gespeicherte Reader-ID noch auf SumUp-Servern existiert. */
     bool checkReader() {
         if (apiKey.length() < 5 || merchantId.length() < 3 || readerId.length() < 5) {
             log("checkReader: Fehlende Konfiguration.");
@@ -146,8 +142,10 @@ bool unpairReader() {
     }
 
     // --- ZAHLUNG STARTEN ---
-    // Sendet den Zahlungsbefehl an die SumUp Cloud
-    // @param amountCents  Zu zahlender Betrag in Cent (z.B. 510 = 5,10 EUR)
+    /**
+     * @brief Sendet den Zahlungsbefehl an die SumUp Cloud.
+     * @param amountCents Zu zahlender Betrag in Cent (z.B. 510 = 5,10 EUR)
+     */
     bool startPayment(int amountCents, String &outId) {
         // Pflichtfelder prüfen — leere merchantId erzeugt URL ".../merchants//readers/..." → 404
         if (apiKey.length() < 5 || merchantId.length() < 3 || readerId.length() < 5) {
@@ -185,7 +183,7 @@ bool unpairReader() {
 
         if (httpCode == 200 || httpCode == 201) {
             JsonDocument res; deserializeJson(res, response);
-            // ID extrahieren (Wichtig für History Scan)
+            // ID extrahieren (wichtig für spätere Verlaufs-Suche)
             if (res["data"]["client_transaction_id"].is<String>()) {
                 outId = res["data"]["client_transaction_id"].as<String>();
                 success = true;
@@ -202,17 +200,15 @@ bool unpairReader() {
         return success;
     }
 
-    // --- STATUS PRÜFEN (History Scan - Robust) ---
-    // Sucht die Transaktions-ID in der Historie des Händlers
+    // --- STATUS PRÜFEN (robuste Verlaufs-Suche) ---
+    /** @brief Sucht die Transaktions-ID in der Historie des Händlers. */
     String checkStatus(const String& trackingId) {
         if (trackingId.length() < 5) return "UNKNOWN";
         WiFiClientSecure client; client.setInsecure();
         HTTPClient http;
         String status = "PENDING"; 
 
-        // WICHTIGE ÄNDERUNG: 
-        // 1. 'order=descending' statt 'desc' (API-Konformität)
-        // 2. 'limit=5' reduziert Speicherbedarf und beschleunigt Parsing
+        // 'order=descending' (API-konform) und 'limit=5' (spart Speicher, schnelleres Parsen)
         String url = "https://api.sumup.com/v0.1/me/transactions/history?limit=5&order=descending";
 
         if (http.begin(client, url)) {
@@ -221,9 +217,9 @@ bool unpairReader() {
 
             if (httpCode == 200) {
                 String payload = http.getString();
-                JsonDocument d; 
-                
-                // Speicher für JSON-Verarbeitung
+                JsonDocument d;
+
+                // JSON-Antwort parsen
                 DeserializationError err = deserializeJson(d, payload);
 
                 if (!err) {
@@ -274,12 +270,12 @@ bool unpairReader() {
     }
 
     // --- ABBRUCH / TIMEOUT ---
-    // Bricht den Vorgang am Terminal ab (Reset in Idle)
+    /** @brief Bricht den Vorgang am Terminal ab (Reset in Idle). */
     void cancel() {
         if (readerId.length() < 5) return;
         WiFiClientSecure client; client.setInsecure();
         HTTPClient http;
-        // Zwingt Terminal in den Idle Modus
+        // Zwingt Terminal in den Idle-Modus
         String url = "https://api.sumup.com/v0.1/merchants/" + merchantId + "/readers/" + readerId + "/terminate";
         log("Sende Terminate Befehl...");
         if (http.begin(client, url)) {

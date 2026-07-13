@@ -5,12 +5,7 @@
 //  Wird von main.cpp per #include eingebunden (single translation unit).
 // =================================================================
 
-/**
- * @brief Reiht eine Telegram-Nachricht in die Queue ein.
- *        Der tatsächliche HTTPS-Aufruf erfolgt nicht-blockierend in
- *        processTelegramQueue() im loop() — nur wenn IDLE und kein
- *        Dispense aktiv ist.
- */
+/** @brief Reiht Telegram-Nachricht in die Queue ein; Versand erfolgt später nicht-blockierend in processTelegramQueue(). */
 void sendTelegramMessage(const String& message) {
   if (!telegramEnabled) return;
   if (telegramBotToken.length() == 0 || telegramChatId.length() == 0) {
@@ -31,11 +26,7 @@ void sendTelegramMessage(const String& message) {
   logf("Telegram: Nachricht eingereiht (%d/%d).", tgQueueCount, TG_QUEUE_MAX);
 }
 
-/**
- * @brief Verarbeitet die Telegram-Queue – wird einmal pro loop()-Iteration aufgerufen.
- *        Sendet maximal eine Nachricht, nur wenn WiFi verbunden, kein Dispense aktiv
- *        und mindestens 3 Sekunden seit dem letzten Send vergangen sind.
- */
+/** @brief Verarbeitet die Telegram-Queue (einmal pro loop()); sendet max. 1 Nachricht bei WiFi, Idle und ≥3s Abstand. */
 void processTelegramQueue() {
   if (tgQueueCount == 0) return;
   if (!telegramEnabled) {
@@ -45,7 +36,7 @@ void processTelegramQueue() {
   if (digitalRead(OFFLINE_MODE_PIN) == LOW) return;
   if (WiFi.status() != WL_CONNECTED) return;
   if (dispenseJob.active) return;                          // Nicht während Warenausgabe
-  if (millis() - lastTelegramSend < 3000) return;         // Rate-Limit: 1 msg / 3 Sek.
+  if (millis() - lastTelegramSend < 3000) return;          // Rate-Limit: 1 Nachricht / 3 Sek.
 
   const String& msg = tgQueue[tgQueueHead];
   logf("Telegram: Sende '%s'...", msg.substring(0, 50).c_str());

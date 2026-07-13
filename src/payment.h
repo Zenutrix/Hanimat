@@ -1,8 +1,8 @@
 #pragma once
 // =================================================================
-//  PAYMENT MODULE
+//  ZAHLUNGSMODUL
 //  Münzen, Scheine, Warenausgabe und SumUp-Zahlungslogik.
-//  Wird von main.cpp per #include eingebunden (single translation unit).
+//  Wird von main.cpp per #include eingebunden (einzelne Übersetzungseinheit).
 // =================================================================
 
 /**
@@ -28,19 +28,17 @@ void addSaleLogEntry(int slot, int priceCents, PaymentMethod method) {
   e.priceCents = priceCents;
   e.method     = method;
 
-  struct tm timeinfo;
-  if (getLocalTime(&timeinfo, 0)) {
-    strftime(e.time, sizeof(e.time), "%d.%m. %H:%M:%S", &timeinfo);
-  } else {
-    snprintf(e.time, sizeof(e.time), "%lus", millis() / 1000UL);
-  }
+  formatLogTimestamp(e.time, sizeof(e.time));
 
   saleLogNext = (saleLogNext + 1) % SALE_LOG_SIZE;
   if (saleLogCount < SALE_LOG_SIZE) saleLogCount++;
 
-  // Kassenstand: nur Bar-Zahlungen zählen
+  // Kassenstand: Bar-Zahlungen voll, bei Mischzahlung nur der tatsächliche Bar-Anteil
   if (method == PaymentMethod::CASH) {
     cashBoxCents += priceCents;
+  } else if (method == PaymentMethod::MIXED) {
+    int cashPortion = priceCents - pendingSumUpAmountCents;
+    if (cashPortion > 0) cashBoxCents += cashPortion;
   }
 
   saveSaleLogToNVS();
@@ -62,6 +60,19 @@ void scheduleDispense(int slotToDispense, PaymentMethod method) {
   if (!checkRelayBoardOnline()) {
     displayErrorMessage("RELAIS FEHLER", "Board offline");
     return;
+  }
+
+  // Laufende Relais-Sequenzen/-Tests abbrechen: Der Kauf hat Vorrang, sonst könnte die
+  // Sequenz das Relais wieder abschalten und die Ausgabe abwürgen (Ware fest, Geld abgebucht).
+  if (allRelaysTest.active) {
+    controlSlotRelay(allRelaysTest.currentSlot, false);
+    allRelaysTest.active = false;
+    logMessage("scheduleDispense: Relais-Sequenz fuer Kauf abgebrochen.");
+  }
+  if (singleRelayTest.active) {
+    controlSlotRelay(singleRelayTest.slot, false);
+    singleRelayTest.active = false;
+    logMessage("scheduleDispense: Einzel-Relais-Test fuer Kauf abgebrochen.");
   }
 
   dispenseJob.active         = true;
@@ -99,40 +110,62 @@ void processDispenseJob() {
       return;
     }
 
-    // Guthaben abziehen
-    creditCents -= slotPriceCents[dispenseJob.slot];
-    if (creditCents < 0) creditCents = 0;
+    bool isPickup    = (dispenseJob.method == PaymentMethod::PICKUP);
+    bool isCardBased = (dispenseJob.method == PaymentMethod::SUMUP ||
+                        dispenseJob.method == PaymentMethod::MIXED);
+    // Preis-Snapshot vom Zahlungsstart nutzen: Live-Preis könnte sich während der
+    // bis zu 80s Terminal-Wartezeit geändert und Umsatz/Kassenstand verfälscht haben.
+    int saleCents = isPickup ? 0
+                  : (isCardBased ? pendingSumUpPriceCents
+                                 : slotPriceCents[dispenseJob.slot]);
+
+    if (!isPickup) {
+      // Guthaben abziehen (Abholfächer sind kostenlos)
+      creditCents -= saleCents;
+      if (creditCents < 0) creditCents = 0;
+      totalRevenueCents += saleCents;
+    }
 
     // Slot als leer markieren + Statistik
     slotAvailable[dispenseJob.slot] = false;
     slotSalesCount[dispenseJob.slot]++;
-    totalRevenueCents += slotPriceCents[dispenseJob.slot];
-    logf("Purchase complete for slot %d. New credit: %s EUR. Total revenue: %s EUR",
+    if (isPickup) {
+      slotPinCode[dispenseJob.slot][0] = '\0'; // Einmal-Code verbraucht
+    }
+    logf("Ausgabe abgeschlossen fuer Fach %d (%s). Guthaben: %s EUR. Gesamtumsatz: %s EUR",
          dispenseJob.slot + 1,
+         isPickup ? "Abholung" : "Verkauf",
          centsToEurStr(creditCents).c_str(),
          centsToEurStr(totalRevenueCents).c_str());
 
     // NVS in einer Session schreiben (spart Flash-Öffnungs-Overhead)
-    char availKey[12], salesKey[12];
+    char availKey[12], salesKey[12], pinKey[12];
     snprintf(availKey, sizeof(availKey), "avail%d", dispenseJob.slot);
     snprintf(salesKey, sizeof(salesKey), "sales%d", dispenseJob.slot);
 
     preferences.begin("hanimat", false);
     preferences.putBool(availKey, false);
     preferences.putInt(salesKey, slotSalesCount[dispenseJob.slot]);
-    preferences.putInt("totalRev", totalRevenueCents);
-    preferences.putInt("creditCts", creditCents);
+    if (isPickup) {
+      snprintf(pinKey, sizeof(pinKey), "pin%d", dispenseJob.slot);
+      preferences.putString(pinKey, "");
+    } else {
+      preferences.putInt("totalRev", totalRevenueCents);
+      preferences.putInt("creditCts", creditCents);
+    }
     preferences.end();
     lastCreditSavedCents = creditCents;
-    logf("NVS: Kauf + Guthaben gesichert (%s EUR)", centsToEurStr(creditCents).c_str());
+    logf("NVS: Ausgabe gesichert (%s EUR)", centsToEurStr(creditCents).c_str());
 
     // Benachrichtigungen
     if (telegramNotifyOnSale) {
-      String saleMessage = "🍯 VERKAUF: Fach #" + String(dispenseJob.slot + 1) + " wurde verkauft und ist jetzt leer.";
+      String saleMessage = isPickup
+        ? "📦 ABHOLUNG: Fach #" + String(dispenseJob.slot + 1) + " wurde abgeholt und ist jetzt leer."
+        : "🍯 VERKAUF: Fach #" + String(dispenseJob.slot + 1) + " wurde verkauft und ist jetzt leer.";
       sendTelegramMessage(saleMessage);
     }
     checkOverallStockLevel();
-    addSaleLogEntry(dispenseJob.slot, slotPriceCents[dispenseJob.slot], dispenseJob.method);
+    addSaleLogEntry(dispenseJob.slot, saleCents, dispenseJob.method);
 
     currentSystemState = CurrentSystemState::DISPENSING;
     playThankYouMelody();
@@ -170,10 +203,8 @@ void processAcceptedCoin() {
     if (pulsesToProcess > 0 && pulsesToProcess < (int)(sizeof(pulseValues) / sizeof(pulseValues[0]))) {
       int coinValueCents = pulseValues[pulsesToProcess];
       if (coinValueCents > 0) {
-        creditCents += coinValueCents;
-        lastCreditChangeTime = millis();
+        addCredit(coinValueCents);
         logf("Guthaben aktualisiert: +%s EUR", centsToEurStr(coinValueCents).c_str());
-        displayNeedsUpdate       = true;
         lastUserInteractionTime  = millis();
         currentSystemState       = CurrentSystemState::USER_INTERACTION;
         startBeep(1200, 40);
@@ -212,11 +243,9 @@ void processBillAcceptorPulses() {
     if (pulsesToProcess > 0 && pulsesToProcess < (int)(sizeof(billValues) / sizeof(billValues[0]))) {
       int billValueEuros = billValues[pulsesToProcess];
       if (billValueEuros > 0) {
-        creditCents          += billValueEuros * 100;
-        lastCreditChangeTime  = millis();
+        addCredit(billValueEuros * 100);
         logf("Bill accepted: %d pulses -> %d EUR. New credit: %s EUR",
              pulsesToProcess, billValueEuros, centsToEurStr(creditCents).c_str());
-        displayNeedsUpdate      = true;
         lastUserInteractionTime = millis();
         currentSystemState      = CurrentSystemState::USER_INTERACTION;
         startBeep(1000, 150);
@@ -233,8 +262,8 @@ void processBillAcceptorPulses() {
 }
 
 /**
- * @brief Leitet den SumUp-Zahlungsprozess ein (non-blocking).
- *        Setzt den State und kehrt zum Loop zurück; der Loop pollt dann den Status.
+ * @brief Leitet den SumUp-Zahlungsprozess ein (nicht blockierend).
+ *        Setzt den Zustand und kehrt zum Loop zurück; der Loop pollt danach den Status.
  */
 void handleSumUpPaymentInitiation() {
   if (!sumupEnabled) {
@@ -294,6 +323,8 @@ void handleSumUpPaymentInitiation() {
     isSumUpTransactionActive = true;
     currentSumUpTxId         = trackingId;
     pendingSumUpAmountCents  = remainingCents;
+    pendingSumUpPriceCents   = priceCents;        // Preis-Snapshot für Umsatz/Kassenstand
+    pendingSumUpWasMixed     = (creditCents > 0); // Schon Bar-Guthaben vorhanden -> Mischzahlung
     sumUpStartTime           = millis();
     lastSumUpCheckTime       = 0;
     logf("SumUp: Checkout API OK. Tracking-ID: %s. Warte im Loop auf Terminal...",

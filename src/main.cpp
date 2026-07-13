@@ -2,7 +2,7 @@
  * @file main.cpp
  * @author Thomas Schöpf / Hanimat
  * @brief Firmware für die HANIMAT Verkaufsmaschine basierend auf der ESP32 Plattform.
- * @version 1.5.2
+ * @version 1.5.3
  * @date 02-02-2026
  *
  * © Copyright Thomas Schöpf
@@ -17,22 +17,21 @@
 #include <stdarg.h>      // va_list für logf()
 #include <Wire.h>
 #include <SPI.h>
-#include <Adafruit_GFX.h>
-#include <Adafruit_ILI9341.h>
+#include <Adafruit_ILI9341.h> // bindet Adafruit_GFX/SPITFT selbst ein (Pixeltransport fuer LVGL)
 #include <WiFi.h>
-#include <WiFiClientSecure.h> // Required for secure HTTPS connections to Telegram
+#include <WiFiClientSecure.h> // Für sichere HTTPS-Verbindungen zu Telegram
 #include <WebServer.h>
 #include <Preferences.h>
 #include <WiFiManager.h>
 #include <Update.h>
 #include <HTTPUpdate.h> // Für Online-Updates
-#include <UniversalTelegramBot.h> // Telegram Bot Library
+#include <UniversalTelegramBot.h> // Telegram-Bot-Bibliothek
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
 #include <LittleFS.h>
 
 // =================================================================
-//  LOGGING SYSTEM
+//  LOGGING-SYSTEM
 // =================================================================
 #define MAX_LOG_LINES    48
 #define MAX_LOG_LINE_LEN 100  // Zeichen pro Eintrag (inkl. Zeitstempel)
@@ -41,17 +40,25 @@ char logBuffer[MAX_LOG_LINES][MAX_LOG_LINE_LEN];
 int  logIndex = 0;
 
 /**
- * @brief Interne Log-Kernfunktion — schreibt Timestamp + Nachricht in den Ring-Buffer.
- *        Wird von logMessage() und logf() genutzt. Kein Heap-Alloc.
+ * @brief Schreibt den Zeitstempel ("dd.mm. HH:MM:SS", Fallback Sekunden seit
+ *        Boot) in den Puffer - gemeinsamer Formatierer für alle Logs.
+ */
+static void formatLogTimestamp(char* out, size_t outSize) {
+  struct tm timeinfo;
+  if (getLocalTime(&timeinfo, 0)) {  // 0ms Timeout — nicht blockierend
+    strftime(out, outSize, "%d.%m. %H:%M:%S", &timeinfo);
+  } else {
+    snprintf(out, outSize, "%lus", millis() / 1000UL);
+  }
+}
+
+/**
+ * @brief Interne Log-Kernfunktion — schreibt Zeitstempel + Nachricht in den
+ *        Ring-Puffer (kein Heap-Alloc). Wird von logMessage() und logf() genutzt.
  */
 static void _logWrite(const char* msg) {
-  struct tm timeinfo;
   char timeString[20];
-  if (getLocalTime(&timeinfo, 0)) {  // 0ms timeout — non-blocking
-    strftime(timeString, sizeof(timeString), "%d.%m. %H:%M:%S", &timeinfo);
-  } else {
-    snprintf(timeString, sizeof(timeString), "%lus", millis() / 1000);
-  }
+  formatLogTimestamp(timeString, sizeof(timeString));
   snprintf(logBuffer[logIndex], MAX_LOG_LINE_LEN, "[%s] %s", timeString, msg);
   Serial.println(logBuffer[logIndex]);
   logIndex = (logIndex + 1) % MAX_LOG_LINES;
@@ -77,22 +84,85 @@ void logf(const char* fmt, ...) {
   _logWrite(buf);
 }
 
+// =================================================================
+//  EREIGNIS-LOG (persistent auf LittleFS) — wichtige Ereignisse ca. 3 Tage
+//  zurueckverfolgbar. Fuer Routine-Meldungen weiterhin logMessage()/logf().
+// =================================================================
+const char*  EVENT_LOG_FILE           = "/eventlog.txt";
+const char*  EVENT_LOG_FILE_OLD       = "/eventlog_old.txt";
+const size_t EVENT_LOG_MAX_FILE_SIZE  = 8192; // 8 KB je Datei (aktuell + alt = max. ~16 KB)
+const size_t EVENT_LOG_MIN_FREE_SPACE = 8192; // 8 KB Reserve — Sicherheitsnetz gegen vollen Speicher
+
+/**
+ * @brief Haengt eine Zeile ans Ereignis-Log an, mit Groessen-Rotation und
+ *        Speicherplatz-Absicherung (opfert noetigenfalls die aelteste Datei).
+ */
+static void _persistEventLog(const String &msg) {
+  size_t freeSpace = LittleFS.totalBytes() - LittleFS.usedBytes();
+  if (freeSpace < EVENT_LOG_MIN_FREE_SPACE && LittleFS.exists(EVENT_LOG_FILE_OLD)) {
+    LittleFS.remove(EVENT_LOG_FILE_OLD); // Selbstheilung: aeltestes Log freigeben
+    freeSpace = LittleFS.totalBytes() - LittleFS.usedBytes();
+  }
+  if (freeSpace < EVENT_LOG_MIN_FREE_SPACE) return; // Sicherheitsnetz: Dateisystem nicht volllaufen lassen
+
+  char timeString[20];
+  formatLogTimestamp(timeString, sizeof(timeString));
+  String line = "[" + String(timeString) + "] " + msg + "\n";
+
+  size_t currentSize = 0;
+  if (LittleFS.exists(EVENT_LOG_FILE)) {
+    File check = LittleFS.open(EVENT_LOG_FILE, "r");
+    if (check) { currentSize = check.size(); check.close(); }
+  }
+
+  if (currentSize + line.length() > EVENT_LOG_MAX_FILE_SIZE) {
+    if (LittleFS.exists(EVENT_LOG_FILE_OLD)) LittleFS.remove(EVENT_LOG_FILE_OLD);
+    if (LittleFS.exists(EVENT_LOG_FILE))     LittleFS.rename(EVENT_LOG_FILE, EVENT_LOG_FILE_OLD);
+  }
+
+  File f = LittleFS.open(EVENT_LOG_FILE, "a");
+  if (f) { f.print(line); f.close(); }
+}
+
+/**
+ * @brief Wie logMessage(), aber zusaetzlich dauerhaft im Ereignis-Log gespeichert.
+ */
+void logEvent(const String &msg) {
+  logMessage(msg);
+  _persistEventLog(msg);
+}
+
+/**
+ * @brief Wie logf(), aber zusaetzlich dauerhaft im Ereignis-Log gespeichert.
+ */
+void logEventf(const char* fmt, ...) {
+  // Eigener, groesserer Puffer (200 statt 100 Zeichen) — mit dem kleinen
+  // logf()-Puffer wurden lange Meldungen sonst still abgeschnitten.
+  char buf[200];
+  va_list args;
+  va_start(args, fmt);
+  vsnprintf(buf, sizeof(buf), fmt, args);
+  va_end(args);
+  logMessage(String(buf));
+  _persistEventLog(String(buf));
+}
+
 
 #include "SumUpController.h" // SumUp Klasse muss im selben Ordner liegen
 
 
 
 // =================================================================
-//                      FIRMWARE VERSION
+//                      FIRMWARE-VERSION
 // =================================================================
-const char* FIRMWARE_VERSION = "V1.5.2";
-const char* FS_VERSION       = "V1.5.2-fs1";
+const char* FIRMWARE_VERSION = "V1.5.3";
+const char* FS_VERSION       = "V1.5.3-fs1";
 
 // =================================================================
-//                      CONFIGURATION CONSTANTS
+//                      KONFIGURATIONS-KONSTANTEN
 // =================================================================
 
-// --- Online Update Configuration ---
+// --- Online-Update-Konfiguration ---
 const char* UPDATE_VERSION_URL  = "https://www.hanimat.at/DAT/update/version.json";
 const char* UPDATE_FIRMWARE_URL = "https://www.hanimat.at/DAT/update/firmware.bin";
 const char* UPDATE_FS_URL       = "https://www.hanimat.at/DAT/update/littlefs.bin";
@@ -101,12 +171,12 @@ const char* UPDATE_FS_URL       = "https://www.hanimat.at/DAT/update/littlefs.bi
 // Installierte LittleFS-Version (aus NVS) — für Update-Vergleich
 String installedFsVersion = "";
 
-// --- Vending Machine Configuration ---
+// --- Verkaufsautomat-Konfiguration ---
 #define RELAYS_PER_EXPANDER 16
 #define NUM_EXPANDERS       8
 const int MAX_SLOTS = RELAYS_PER_EXPANDER * NUM_EXPANDERS; // 128 Fächer max
 
-// --- Timing and Timeout Values (in milliseconds) ---
+// --- Zeit- und Timeout-Werte (in Millisekunden) ---
 unsigned long COIN_PROCESSING_DELAY = 120;
 unsigned long BILL_ISR_DEBOUNCE_MS = 75;
 unsigned long BILL_GROUP_PROCESSING_TIMEOUT_MS = 1500;
@@ -115,15 +185,15 @@ unsigned long KEYPAD_INPUT_TIMEOUT = 3000;
 unsigned long WEB_TIMEOUT = 600000;
 unsigned long SLOT_SELECTION_TIMEOUT = 10000;
 unsigned long DISPLAY_TIMEOUT = 20000;
-const unsigned long STARTUP_IGNORE_BILL_TIME = 5000; // Ignore bill pulses briefly on startup
+const unsigned long STARTUP_IGNORE_BILL_TIME = 5000; // Scheinimpulse beim Start kurz ignorieren
 
-// --- Hardware Pin Definitions ---
+// --- Hardware-Pin-Definitionen ---
 #define TFT_CS    26
 #define TFT_DC    4
 #define TFT_RST   16
 #define TFT_SCK   18
 #define TFT_MOSI  23
-#define TFT_MISO  -1 // MISO not used
+#define TFT_MISO  -1 // MISO nicht verwendet
 
 #define COIN_ACCEPTOR_PIN 5
 #define BILL_ACCEPTOR_PIN 32
@@ -134,15 +204,15 @@ const unsigned long STARTUP_IGNORE_BILL_TIME = 5000; // Ignore bill pulses brief
 #define OFFLINE_MODE_PIN 27
 #define SUMUP_BUTTON_PIN 0
 
-// --- Payment Mapping ---
-// Maps the number of pulses to a cent value for coins. Index is the pulse count.
+// --- Zahlungs-Mapping ---
+// Ordnet die Pulsanzahl einem Cent-Wert für Münzen zu. Index = Pulsanzahl.
 // Editierbar via Web-Interface, gespeichert in NVS ("coinPulses").
 int pulseValues[7] = {0, 0, 10, 20, 50, 100, 200}; // 0..6 pulses → Cent
 
-// Maps the number of pulses to a Euro value for bills. Index is the pulse count.
+// Ordnet die Pulsanzahl einem Euro-Wert für Scheine zu. Index = Pulsanzahl.
 // Editierbar via Web-Interface, gespeichert in NVS ("billPulses").
 int billValues[17] = {
-//Pulses: 0, 1, 2, 3, 4, 5, 6, 7, 8,  9, 10, 11, 12, 13, 14, 15, 16
+//Impulse: 0, 1, 2, 3, 4, 5, 6, 7, 8,  9, 10, 11, 12, 13, 14, 15, 16
           0, 0, 0, 0, 5, 0, 0, 0, 10, 0,  0,  0,  0,  0,  0,  0,  20
 };
 
@@ -150,22 +220,23 @@ int billValues[17] = {
 bool coinAcceptorEnabled = true;   // Münzprüfer aktiv
 bool billAcceptorEnabled = true;   // Scheinprüfer aktiv
 
-// --- Security ---
-const String DEFAULT_PASSWORD = "admin"; // Default password for the web interface
+// --- Sicherheit ---
+const String DEFAULT_PASSWORD = "admin"; // Standard-Passwort für die Weboberfläche
 
-// --- System State ---
+// --- System-Status ---
 enum class CurrentSystemState {
-  IDLE,             // Default state, waiting for user interaction
-  USER_INTERACTION, // User is interacting via keypad or payment
-  ERROR_DISPLAY,    // An error message is being shown
-  OTA_UPDATE,       // OTA update is in progress
-  SUMUP_PENDING,    // Waiting for SumUp payment
-  DISPENSING        // Relay aktiv, Ausgabe läuft — Display zeigt VIELEN DANK
+  IDLE,             // Grundzustand, wartet auf Benutzerinteraktion
+  USER_INTERACTION, // Benutzer interagiert über Tastatur oder Zahlung
+  ERROR_DISPLAY,    // Fehlermeldung wird angezeigt
+  OTA_UPDATE,       // OTA-Update läuft
+  SUMUP_PENDING,    // Wartet auf SumUp-Zahlung
+  DISPENSING,       // Relay aktiv, Ausgabe läuft — Display zeigt VIELEN DANK
+  PICKUP_PIN_ENTRY  // Abholfach gewaehlt, wartet auf PIN-Code-Eingabe
 };
 CurrentSystemState currentSystemState = CurrentSystemState::IDLE;
 
 // =================================================================
-//                      GLOBAL VARIABLES
+//                      GLOBALE VARIABLEN
 // =================================================================
 
 // --- SumUp Konfiguration ---
@@ -173,7 +244,7 @@ String sumupApiKey = "";
 String sumupMerchantId = "";
 String sumupReaderId = "";
 bool sumupEnabled = false;
-unsigned long sumupTimeout = 60000; // Millisekunden (Default 60s)
+unsigned long sumupTimeout = 80000; // Millisekunden (Default 80s, mehr Puffer fuer SumUp-History-Verzoegerung)
 
 // Controller Instanz
 SumUpController sumUp("", "", "");
@@ -181,25 +252,27 @@ SumUpController sumUp("", "", "");
 // --- SumUp Asynchrone Status Variablen ---
 bool isSumUpTransactionActive = false;
 String currentSumUpTxId = "";
-int pendingSumUpAmountCents = 0; // Zu zahlender Betrag in Cent
+int pendingSumUpAmountCents = 0; // Zu zahlender Betrag in Cent (bei Erfolg 1:1 gutgeschrieben, NICHT neu aus dem Fachpreis berechnet)
+int pendingSumUpPriceCents  = 0; // Fach-Preis zum Zeitpunkt des Zahlungsstarts (Snapshot fuer Umsatz/Kassenstand — unabhaengig von spaeteren Preisaenderungen)
+bool pendingSumUpWasMixed   = false; // true = beim Start der Kartenzahlung war bereits Bar-Guthaben vorhanden (Bar+Karte)
 unsigned long sumUpStartTime = 0;
 unsigned long lastSumUpCheckTime = 0;
 
 
-// --- Timing & State Tracking ---
+// --- Timing & Status-Tracking ---
 unsigned long slotSelectedTime = 0;
 unsigned long bootTime = 0;
 unsigned long lastRelayChangeTime = 0;
 unsigned long lastUserInteractionTime = 0;
 
-// --- Web Server & Storage ---
+// --- Webserver & Speicher ---
 WebServer server(80);
 Preferences preferences;
 
-// --- Relay Control ---
-static uint16_t expanderOutputStates[NUM_EXPANDERS]; // Bitmask per Expander
+// --- Relais-Steuerung ---
+static uint16_t expanderOutputStates[NUM_EXPANDERS]; // Bitmaske pro Expander
 
-// --- Keypad Configuration ---
+// --- Tastatur-Konfiguration ---
 const byte KEYPAD_ROWS = 4;
 const byte KEYPAD_COLS = 3;
 char keys[KEYPAD_ROWS][KEYPAD_COLS] = {
@@ -208,26 +281,41 @@ char keys[KEYPAD_ROWS][KEYPAD_COLS] = {
   {'7','8','9'},
   {'*','0','#'}
 };
-byte rowPins[KEYPAD_ROWS] = {15, 14, 12, 17}; // ESP32 GPIO pins for keypad rows
-byte colPins[KEYPAD_COLS] = {2, 19, 13};  // ESP32 GPIO pins for keypad columns
+byte rowPins[KEYPAD_ROWS] = {15, 14, 12, 17}; // ESP32 GPIO-Pins für Tastatur-Zeilen
+byte colPins[KEYPAD_COLS] = {2, 19, 13};  // ESP32 GPIO-Pins für Tastatur-Spalten
 
-// --- Keypad State ---
+// --- Tastatur-Status ---
 char lastPhysicallyPressedKey = 0;
 char lastReturnedKey = 0;
 unsigned long lastKeyPressTime = 0;
-const unsigned long KEYPAD_DEBOUNCE_PERIOD = 50; // Debounce time for keypad
+const unsigned long KEYPAD_DEBOUNCE_PERIOD = 50; // Entprellzeit für die Tastatur
 
 // --- Display ---
 Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_RST);
 
 
-// --- Slot Data ---
+// --- Fach-Daten ---
 int slotPriceCents[MAX_SLOTS]; // Preise in Cent (z.B. 500 = 5,00 EUR)
 bool slotAvailable[MAX_SLOTS];
 bool slotLocked[MAX_SLOTS];
 int activeSlots = MAX_SLOTS;
 
-// --- Telegram Notification Configuration ---
+// --- Abholfach-Daten ---
+// Heap-allokiert statt statisches Array: dram0_0_seg (~124 KB) ist fast voll
+// (~176 Byte frei), der Heap hat dagegen reichlich Platz. Groesse `activeSlots`
+// wird erst in setup() bekannt.
+bool  *slotIsPickup = nullptr;    // true = Abholfach (kein Preis, PIN-Code statt Kauf)
+char (*slotPinCode)[7] = nullptr; // "" = kein Code hinterlegt, sonst 4-6 Ziffern + Nullterminator
+
+/**
+ * @brief Abholfach ohne hinterlegten Code = faktisch leer. Eine gemeinsame
+ *        Definition fuer Keypad-Logik und Display, damit beide nie auseinanderlaufen.
+ */
+inline bool isPickupSlotEmpty(int slot) {
+  return slotIsPickup[slot] && strlen(slotPinCode[slot]) == 0;
+}
+
+// --- Telegram-Benachrichtigungs-Konfiguration ---
 int almostEmptyThreshold = 5;
 bool almostEmptyNotificationSent = false;
 bool emptyNotificationSent = false;
@@ -247,7 +335,7 @@ static int       tgQueueTail         = 0;
 static int       tgQueueCount        = 0;
 static unsigned long lastTelegramSend = 0;
 
-// --- Hanimat Status Network ---
+// --- Hanimat-Status-Netzwerk ---
 bool statusEnabled = true; // Variable zum Deaktivieren/Aktivieren
 const char* statusServerUrl = "https://status.hanimat.at/api.php";
 const char* statusApiKey = "HanimatKeyStatus";
@@ -271,7 +359,7 @@ unsigned long loginLockoutUntil = 0;
 const int     LOGIN_MAX_FAILS   = 5;
 const unsigned long LOGIN_LOCKOUT_MS = 5UL * 60UL * 1000UL; // 5 Minuten
 
-// --- Heap Monitoring ---
+// --- Heap-Überwachung ---
 unsigned long lastHeapCheckTime = 0;
 const unsigned long HEAP_CHECK_INTERVAL = 60000; // 60 Sekunden
 const uint32_t HEAP_WARN_THRESHOLD     = 30000;  // Warnung unter 30 KB
@@ -280,10 +368,53 @@ bool heapWarningSent = false;                     // Damit nicht jede Minute gew
 // Flag zur Erkennung eines offenen Pins
 bool resetPinIsFloating = false; 
 
-// --- Payment & Credit ---
+// --- Zahlung & Guthaben ---
 // Guthaben und Preise werden intern in CENT (Integer) gespeichert,
 // um Gleitkomma-Präzisionsfehler bei Geldbeträgen zu vermeiden.
 int creditCents = 0;
+
+// Sicherheitsnetz: Guthaben darf nie ueber diesen Wert steigen (faengt Bugs und
+// Fehleingaben ab). Im Webif einstellbar (Einstellungen > Guthaben), Standard 100 EUR.
+int maxCreditCents = 10000;
+
+// Maximaler Betrag pro manuellem "Guthaben hinzufuegen"-Vorgang. Ebenfalls im
+// Webif einstellbar, Standard 50 EUR.
+int maxTopUpCents = 5000;
+
+// Telegram-Warnung, wenn das Guthaben eine einstellbare Schwelle ueberschreitet
+// (Einstellung auf der Telegram-Seite im Webif, unabhaengig vom Sicherheitsnetz oben).
+bool telegramNotifyCreditThreshold = false;
+int  creditWarnThresholdCents      = 5000; // Standard 50 EUR
+bool creditWarnSent                = false; // verhindert Mehrfach-Meldung, solange ueberschritten
+
+String centsToEurStr(int cents); // Definition weiter unten (Helper-Bereich)
+
+/**
+ * @brief Haelt creditCents im gueltigen Bereich [0, maxCreditCents] und loggt,
+ *        falls das je noetig war. Nach JEDER Aenderung von creditCents aufrufen.
+ */
+void enforceCreditCap() {
+  if (creditCents > maxCreditCents) {
+    logEventf("SICHERHEIT: Guthaben (%s EUR) ueberschritt die Obergrenze von %s EUR - wurde gedeckelt!",
+         centsToEurStr(creditCents).c_str(), centsToEurStr(maxCreditCents).c_str());
+    creditCents = maxCreditCents;
+  }
+  if (creditCents < 0) creditCents = 0; // Guthaben kann nie negativ sein
+}
+
+// --- Automatischer Guthaben-Reset (taeglich zu fester Uhrzeit, im Webif einstellbar) ---
+bool autoCreditResetEnabled = false;
+int  autoCreditResetHour    = 3;    // 0-23
+int  autoCreditResetMinute  = 0;    // 0-59
+int  autoCreditResetLastDay = -1;   // tm_yday des letzten erfolgreichen Resets (-1 = noch nie)
+bool autoCreditResetPending = false; // Zielzeit erreicht, wartet auf einen Kauf-freien Moment
+unsigned long lastAutoCreditResetCheck = 0;
+
+// --- Idle-Guthaben-Reset (unabhaengig von der Uhrzeit, funktioniert auch ohne NTP) ---
+// Setzt Guthaben zurueck, wenn der Automat X Minuten unbenutzt war. Standardmaessig aus.
+bool idleCreditResetEnabled = false;
+int  idleCreditResetMinutes = 10; // 1-120
+
 volatile int coinPulseCount = 0;
 volatile unsigned long lastCoinPulseTime = 0;
 
@@ -295,26 +426,27 @@ int lastCreditSavedCents = 0;
 unsigned long lastCreditChangeTime = 0;
 const unsigned long NVS_SAVE_DELAY = 10000; // 10 Sekunden warten nach letztem Einwurf
 
-// --- Display Customization ---
+// --- Display-Anpassung ---
 const int SLOGAN_MAX_LENGTH = 24;
 String displaySlogan   = "";
 String displayFooter   = "www.hanimat.at";
 bool   displayWhiteMode = false;
 
-// --- User Input State ---
+// --- Eingabe-Status ---
 String keypadInputBuffer = "";
 unsigned long lastKeypadInputTime = 0;
 int selectedSlot = -1;
+String pinEntryBuffer = ""; // Eingabepuffer fuer Abholfach-PIN (getrennt von keypadInputBuffer)
 
-// --- Authentication ---
+// --- Authentifizierung ---
 String savedPassword       = DEFAULT_PASSWORD;
 String activeSessionToken  = ""; // Leer = niemand eingeloggt
 unsigned long lastActivityTimeWeb = 0;
 
 bool displayNeedsUpdate = true;
 
-// --- Verkaufsstatistik: RAM-only Ringpuffer (max. 50 Einträge) ---
-enum class PaymentMethod { CASH, SUMUP };
+// --- Verkaufsstatistik: Ringpuffer nur im RAM (max. 50 Einträge) ---
+enum class PaymentMethod { CASH, SUMUP, PICKUP, MIXED }; // MIXED = Teilbetrag bar + Rest per Karte
 struct SaleLogEntry {
   char time[20];     // "dd.MM. HH:mm:ss" oder "NNNs" (Fallback)
   int  slot;         // 0-basiert
@@ -348,15 +480,15 @@ bool lastDrawnSlotAvail   = true;
 bool lastDrawnSlotLocked  = false;
 String lastDrawnKeypadBuffer = "";
 
-// --- OTA Update ---
+// --- OTA-Update ---
 String otaStatusMessage = "";
 bool otaUpdateInProgress = false;
 
-// --- Non-blocking Error Display ---
+// --- Nicht-blockierende Fehleranzeige ---
 bool errorDisplayActive = false;
 unsigned long errorDisplayUntil = 0;
 
-// --- Non-blocking Melody Player ---
+// --- Nicht-blockierender Melodie-Player ---
 // Kaufmelodie: aufsteigendes C-Dur Arpeggio — eine Oktave tiefer, voller Klang
 //               C4   E4   G4   C5    E5    G5
 const int MELODY_NOTES[]     = {  262,  330,  392,  523,  659,  784 };
@@ -368,7 +500,7 @@ int           melodyNoteIndex    = 0;
 unsigned long melodyNoteStart    = 0;
 bool          melodyNotePlaying  = false; // true = Ton läuft, false = Pause
 
-// --- Non-blocking Single-Beep (Münze / Schein / Fehler) ---
+// --- Nicht-blockierender Einzel-Beep (Münze / Schein / Fehler) ---
 struct SingleBeep {
   bool          active       = false;
   unsigned long endTime      = 0;
@@ -379,7 +511,7 @@ struct SingleBeep {
 };
 SingleBeep singleBeep;
 
-// --- Non-blocking Relay-Test Jobs ---
+// --- Nicht-blockierende Relais-Test-Jobs ---
 struct RelayTestJob {
   bool active;
   int  slot;
@@ -391,32 +523,35 @@ struct RelaySequenceJob {
   bool active;
   int  currentSlot;
   unsigned long phaseStartTime;
-  bool relayOn; // true = AN-Phase (300ms), false = AUS-Pause (100ms)
+  bool relayOn;    // true = AN-Phase (300ms), false = AUS-Pause (100ms)
+  bool emptyOnly;  // true = nur leere, unverriegelte Faecher werden angefahren
 };
-RelaySequenceJob allRelaysTest = { false, 0, 0, false };
+RelaySequenceJob allRelaysTest = { false, 0, 0, false, false };
 
-// --- Non-blocking Reset Button State Machine ---
-enum class ResetButtonState { NONE, DETECTING, CONFIRMING };
+// --- Nicht-blockierende Reset-Taster-Zustandsmaschine ---
+enum class ResetButtonState { NONE, DETECTING, MENU, CONFIRM };
 ResetButtonState resetButtonState = ResetButtonState::NONE;
 unsigned long resetDetectStartTime = 0;
 unsigned long resetConfirmStartTime = 0;
+int resetChoice = 0; // 1 = nur WLAN, 2 = Werksreset
 
 // --- Telegram Bot ---
 WiFiClientSecure secured_client;
-String telegramBotToken = ""; // Placeholder for Telegram Bot Token
-String telegramChatId = "";   // Placeholder for Telegram Chat ID
+String telegramBotToken = ""; // Platzhalter für den Telegram-Bot-Token
+String telegramChatId = "";   // Platzhalter für die Telegram-Chat-ID
 // Token ist beim Start noch leer – wird in setup() nach NVS-Laden via bot.updateToken() gesetzt
 UniversalTelegramBot bot("", secured_client);
 
 
 // =================================================================
-//                      FUNCTION PROTOTYPES
+//                      FUNKTIONS-PROTOTYPEN
 // =================================================================
 void setupWebServer();
 void updateDisplayScreen();
 char manualGetKeyState();
 void processKeypad();
 void processKeypadSelection();
+void processPickupPinKey(char key);
 void scheduleDispense(int slot, PaymentMethod method);
 void processDispenseJob();
 void addSaleLogEntry(int slot, int priceCents, PaymentMethod method);
@@ -437,16 +572,16 @@ void processMelody();
 void processSingleBeep();
 void startBeep(int freq, int durationMs);
 void processRelayTestJobs();
-// Neue Funktionen für Online Update
+// Online-Update-Funktionen
 void handleCheckOnlineUpdate();
 void handleStartOnlineUpdate();
 
-// LittleFS API Handlers
+// LittleFS-API-Handler
 void handleApiStatus();
 void handleApiConfig();
 void handleStartFsUpdate();
 
-// Web Server Handlers
+// Webserver-Handler
 void handleRoot();
 void handleLogin();
 void handleLogout();
@@ -476,11 +611,11 @@ void handleDisplayConfigPage();
 void handleSaveDisplayConfig();
 void handleSalesLog();
 
-// HTML Page Generators
+// HTML-Seiten-Generatoren
 void showLoginPage();
 void showDashboard();
 
-// Utility Functions
+// Hilfsfunktionen
 int countAvailableSlots();
 int countEmptySlots();
 void displayErrorMessage(const String &line1, const String &line2 = "");
@@ -491,12 +626,12 @@ bool checkRelayBoardOnline();
 void sendTelegramMessage(const String& message);
 void processTelegramQueue();
 
-// Interrupt Service Routines
+// Interrupt-Service-Routinen
 void IRAM_ATTR coinAcceptorISR();
 void IRAM_ATTR billAcceptorISR();
 
 // =================================================================
-//                      HELPER FUNCTIONS
+//                      HILFSFUNKTIONEN
 // =================================================================
 
 /**
@@ -515,7 +650,7 @@ String centsToEurStr(int cents) {
 }
 
 // =============================================================================
-// --- WEB SESSION HELPERS ---
+// --- WEB-SESSION-HILFSFUNKTIONEN ---
 // =============================================================================
 
 /**
@@ -550,10 +685,9 @@ String generateSessionToken() {
   return String(buf);
 }
 
-// --- Relay Helper ---
+// --- Relais-Hilfsfunktion ---
 /**
- * @brief Checks if the I2C relay expander board is connected and responsive.
- * @return True if the board acknowledges its address, false otherwise.
+ * @brief Prüft, ob das I2C-Relais-Expander-Board erreichbar ist.
  */
 bool checkRelayBoardOnline() {
   Wire.beginTransmission(RELAY_I2C_ADDRESS);
@@ -564,7 +698,7 @@ bool checkRelayBoardOnline() {
   return (error == 0);
 }
 
-// --- NVS Helper ---
+// --- NVS-Hilfsfunktion ---
 void saveCreditToNVS(bool force) {
     // Nur speichern, wenn sich der Wert geändert hat (Wear Leveling)
     if (creditCents != lastCreditSavedCents || force) {
@@ -577,19 +711,111 @@ void saveCreditToNVS(bool force) {
     }
 }
 
-// --- ISRs + Reset Reason ---
+/**
+ * @brief Zentrale Stelle fuer jede Guthaben-Erhoehung (Muenze, Schein, Karte,
+ *        manuell) - haelt die Obergrenze ein und merkt den Aenderungszeitpunkt.
+ */
+void addCredit(int amountCents) {
+  creditCents += amountCents;
+  enforceCreditCap();
+  lastCreditChangeTime = millis();
+  displayNeedsUpdate   = true;
+}
+
+/**
+ * @brief Zentrale Stelle fuer jeden Guthaben-Reset auf 0: sichert sofort in
+ *        NVS und schreibt den Grund ins Ereignis-Log (nur wenn Guthaben da war).
+ */
+void resetCredit(const String &reason) {
+  if (creditCents != 0) {
+    logEventf("Guthaben-Reset (%s): %s EUR -> 0.00 EUR.",
+              reason.c_str(), centsToEurStr(creditCents).c_str());
+  }
+  creditCents = 0;
+  saveCreditToNVS(true);
+  displayNeedsUpdate = true;
+}
+
+/**
+ * @brief Prueft, ob der taegliche Guthaben-Reset faellig ist, und fuehrt ihn aus,
+ *        sobald gerade kein Kauf/keine Zahlung laeuft (sonst verschoben).
+ */
+void checkAutoCreditReset() {
+  if (!autoCreditResetEnabled) return;
+  if (millis() - lastAutoCreditResetCheck < 5000) return; // alle 5 Sekunden reicht
+  lastAutoCreditResetCheck = millis();
+
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo, 0)) return; // Uhrzeit noch nicht synchronisiert (kein WLAN/NTP)
+
+  if (!autoCreditResetPending &&
+      timeinfo.tm_hour == autoCreditResetHour &&
+      timeinfo.tm_min  == autoCreditResetMinute &&
+      timeinfo.tm_yday != autoCreditResetLastDay) {
+    autoCreditResetPending = true;
+    logEventf("Automatischer Guthaben-Reset: Zielzeit %02d:%02d erreicht, warte auf freien Moment.",
+              autoCreditResetHour, autoCreditResetMinute);
+  }
+
+  if (autoCreditResetPending) {
+    bool busy = dispenseJob.active || isSumUpTransactionActive ||
+                currentSystemState != CurrentSystemState::IDLE;
+    if (!busy) {
+      resetCredit("Uhrzeit-Reset");
+      autoCreditResetLastDay = timeinfo.tm_yday;
+      autoCreditResetPending = false;
+    }
+  }
+}
+
+/**
+ * @brief Setzt das Guthaben zurueck, wenn der Automat laenger als
+ *        idleCreditResetMinutes unbenutzt war (unabhaengig von Uhrzeit/NTP).
+ */
+void checkIdleCreditReset() {
+  if (!idleCreditResetEnabled) return;
+  if (creditCents <= 0) return; // nichts zurueckzusetzen
+
+  // Gleicher Schutz wie beim Uhrzeit-Reset: nie mitten in einem Kauf/einer
+  // Zahlung eingreifen (Geld-Pfad, defense-in-depth).
+  if (dispenseJob.active || isSumUpTransactionActive ||
+      currentSystemState != CurrentSystemState::IDLE) return;
+
+  unsigned long idleMs = (unsigned long)idleCreditResetMinutes * 60000UL;
+  if (millis() - lastUserInteractionTime >= idleMs) {
+    resetCredit(String(idleCreditResetMinutes) + " min Inaktivitaet");
+  }
+}
+
+/**
+ * @brief Prueft periodisch, ob das Guthaben die Telegram-Warnschwelle ueberschreitet
+ *        (unabhaengig davon, wodurch sich der Wert veraendert hat).
+ */
+void checkCreditWarnThreshold() {
+  if (!telegramNotifyCreditThreshold) return;
+
+  if (creditCents > creditWarnThresholdCents) {
+    if (!creditWarnSent) {
+      sendTelegramMessage("⚠️ HANIMAT: Guthaben hat " + centsToEurStr(creditWarnThresholdCents) +
+                          " EUR ueberschritten (aktuell " + centsToEurStr(creditCents) + " EUR).");
+      creditWarnSent = true;
+      logEvent("Telegram: Guthaben-Warnschwelle ueberschritten, Nachricht gesendet.");
+    }
+  } else {
+    creditWarnSent = false; // Wieder unter der Schwelle -> naechstes Ueberschreiten erneut melden
+  }
+}
 
 // =================================================================
-//                      INTERRUPT SERVICE ROUTINES
+//                      INTERRUPT-SERVICE-ROUTINEN
 // =================================================================
 
 /**
- * @brief ISR for the coin acceptor. Increments a pulse counter.
+ * @brief ISR für den Münzprüfer — zählt Impulse.
  */
 void IRAM_ATTR coinAcceptorISR() {
   unsigned long now = millis();
-  // Nur zählen, wenn der letzte Puls mindestens 20ms her ist
-  // Das filtert "Prellen" bei FAST-Einstellung effektiv raus
+  // Nur zaehlen, wenn der letzte Puls mind. 20ms her ist (filtert Prellen bei FAST-Einstellung)
   if (now - lastCoinPulseTime > 20) { 
     coinPulseCount++;
     lastCoinPulseTime = now;
@@ -597,11 +823,11 @@ void IRAM_ATTR coinAcceptorISR() {
 }
 
 /**
- * @brief ISR for the bill acceptor. Increments a pulse counter with debouncing.
+ * @brief ISR für den Scheinprüfer — zählt Impulse mit Entprellung.
  */
 void IRAM_ATTR billAcceptorISR() {
   unsigned long currentMillis = millis();
-  if (currentMillis < STARTUP_IGNORE_BILL_TIME) return; // Ignore pulses at startup
+  if (currentMillis < STARTUP_IGNORE_BILL_TIME) return; // Impulse beim Start ignorieren
 
   if (currentMillis - lastBillDebounceEdgeTime > BILL_ISR_DEBOUNCE_MS) {
     billAcceptorPulseCount++;
@@ -657,9 +883,8 @@ void checkAndLogResetReason() {
 //                            SETUP
 // =================================================================
 /**
- * @brief Zentrale Setup-Routine.
- * Optimiert auf minimalen Boot-Verzug: Display-Init erfolgt sofort, 
- * gefolgt von Hardware-Aktivierung und zeitbegrenztem Netzwerk-Setup.
+ * @brief Zentrale Setup-Routine - Display-Init zuerst (vermeidet Boot-Verzug),
+ *        dann Hardware-Aktivierung und zeitbegrenztes Netzwerk-Setup.
  */
 void setup() {
   // --- 1. SOFORTIGER VISUELLER START (Millisekunden-Bereich) ---
@@ -671,8 +896,7 @@ void setup() {
   tft.setRotation(1);
   initLVGL();
   displayStartupScreen();
-  
-  // Kurzer Halt für das Auge, während im Hintergrund die Hardware anläuft
+
 
   logf("System Start: HANIMAT %s", FIRMWARE_VERSION);
   bootTime = millis();
@@ -680,7 +904,7 @@ void setup() {
 
   // --- 2. I2C & RELAIS (ELEKTRISCHE INITIALISIERUNG) ---
   Wire.begin();
-  Wire.setClock(400000L);       // Fast-Mode 400kHz       // Fast-Mode 100kHz
+  Wire.setClock(400000L);       // Fast-Mode 400kHz
   Wire.setTimeout(3000); // 3ms Timeout bei Bus-Hänger (kein Einfrieren mehr)
 
   // LittleFS initialisieren (Web-Interface Assets)
@@ -695,12 +919,12 @@ void setup() {
     expanderOutputStates[e] = 0x0000;
     uint8_t addr = RELAY_I2C_ADDRESS + e;
     Wire.beginTransmission(addr);
-    Wire.write(0x06); // Configuration: alle Pins als Ausgang
+    Wire.write(0x06); // Konfiguration: alle Pins als Ausgang
     Wire.write(0x00);
     Wire.write(0x00);
     if (Wire.endTransmission() != 0) break; // Expander nicht vorhanden → abbrechen
     Wire.beginTransmission(addr);
-    Wire.write(0x02); // Output Port 0: alle LOW
+    Wire.write(0x02); // Ausgangs-Port 0: alle LOW
     Wire.write(0x00);
     Wire.write(0x00);
     Wire.endTransmission();
@@ -719,7 +943,7 @@ void setup() {
   ledcSetup(0, 2000, 8);
   ledcAttachPin(BUZZER_PIN, 0);
 
-  // Keypad Matrix Pins
+  // Tastatur-Matrix-Pins
   for (int i = 0; i < KEYPAD_ROWS; i++) {
     pinMode(rowPins[i], OUTPUT);
     digitalWrite(rowPins[i], LOW);
@@ -740,14 +964,15 @@ void setup() {
 
   if (!preferences.isKey("initialized")) {
     logMessage("NVS: Erst-Initialisierung...");
-    for (int i = 0; i < MAX_SLOTS; i++) {
-      snprintf(kBuf, sizeof(kBuf), "priceC%d", i); // Cent-Schlüssel
-      preferences.putInt(kBuf, 500 + i * 10);      // 5,00 EUR / 5,10 EUR / ...
+    for (int i = 0; i < 16; i++) {
+      snprintf(kBuf, sizeof(kBuf), "priceC%d", i);
+      preferences.putInt(kBuf, 500 + i * 10);
       snprintf(kBuf, sizeof(kBuf), "avail%d", i);
       preferences.putBool(kBuf, true);
       snprintf(kBuf, sizeof(kBuf), "locked%d", i);
       preferences.putBool(kBuf, false);
     }
+    preferences.putInt("activeSlots", 16);
     preferences.putString("password", DEFAULT_PASSWORD);
     preferences.putBool("initialized", true);
   }
@@ -790,15 +1015,24 @@ void setup() {
   telegramNotifyEmpty       = preferences.getBool("tgNotifyEmpty",  true);
   telegramNotifyCrash       = preferences.getBool("tgNotifyCrash",  true);
   telegramNotifyBruteForce  = preferences.getBool("tgNotifyBrute",  true);
+  telegramNotifyCreditThreshold = preferences.getBool("tgNotifyCredit", false);
+  creditWarnThresholdCents      = preferences.getInt("creditWarnCts", 5000);
   almostEmptyThreshold = preferences.getInt("tgAlmostThres", 5);
   statusEnabled = preferences.getBool("statusEnabled", true);
+  autoCreditResetEnabled = preferences.getBool("acrEnabled", false);
+  autoCreditResetHour    = preferences.getInt("acrHour", 3);
+  autoCreditResetMinute  = preferences.getInt("acrMinute", 0);
+  idleCreditResetEnabled = preferences.getBool("idleCrEn", false);
+  idleCreditResetMinutes = preferences.getInt("idleCrMin", 10);
+  maxCreditCents = preferences.getInt("maxCreditCts", 10000);
+  maxTopUpCents  = preferences.getInt("maxTopUpCts", 5000);
   bot.updateToken(telegramBotToken);
   
   sumupEnabled = preferences.getBool("suEnabled", false);
   sumupApiKey = preferences.getString("suApiKey", "");
   sumupMerchantId = preferences.getString("suMid", "");
   sumupReaderId = preferences.getString("suRid", "");
-  sumupTimeout = preferences.getULong("suTimeout", 60000);
+  sumupTimeout = preferences.getULong("suTimeout", 80000);
   sumUp = SumUpController(sumupApiKey, sumupMerchantId, sumupReaderId);
 
   displaySlogan    = preferences.getString("dispSlogan", "");
@@ -806,6 +1040,17 @@ void setup() {
   displayWhiteMode = preferences.getBool("dispWhite", false);
   applyLVGLTheme();
   activeSlots = preferences.getInt("activeSlots", 16);
+
+  // Abholfach-Arrays sind heap-allokiert (siehe Kommentar oben) und werden erst hier
+  // auf Groesse `activeSlots` angelegt. new T[n]() initialisiert automatisch auf 0/false.
+  slotIsPickup = new bool[activeSlots]();
+  slotPinCode  = new char[activeSlots][7]();
+  for (int i = 0; i < activeSlots; i++) {
+    snprintf(kBuf, sizeof(kBuf), "pickup%d", i);
+    slotIsPickup[i] = preferences.getBool(kBuf, false);
+    snprintf(kBuf, sizeof(kBuf), "pin%d", i);
+    preferences.getString(kBuf, slotPinCode[i], sizeof(slotPinCode[i]));
+  }
 
   for (int i = 0; i < MAX_SLOTS; i++) {
     snprintf(kBuf, sizeof(kBuf), "priceC%d", i);
@@ -835,6 +1080,21 @@ void setup() {
   for (int i = 0; i < MAX_SLOTS; i++) {
     snprintf(kBuf, sizeof(kBuf), "sales%d", i);
     slotSalesCount[i] = preferences.getInt(kBuf, 0);
+  }
+
+  // NVS Migration V2: Slot-Einträge außerhalb der aktiven Fächer löschen (behebt NVS-Overflow)
+  if (!preferences.isKey("nvsMigV2")) {
+    logMessage("NVS: Migration V2 – bereinige inaktive Slot-Eintraege...");
+    for (int i = activeSlots; i < MAX_SLOTS; i++) {
+      snprintf(kBuf, sizeof(kBuf), "priceC%d", i);  if (preferences.isKey(kBuf)) preferences.remove(kBuf);
+      snprintf(kBuf, sizeof(kBuf), "avail%d",  i);  if (preferences.isKey(kBuf)) preferences.remove(kBuf);
+      snprintf(kBuf, sizeof(kBuf), "locked%d", i);  if (preferences.isKey(kBuf)) preferences.remove(kBuf);
+      snprintf(kBuf, sizeof(kBuf), "sales%d",  i);  if (preferences.isKey(kBuf)) preferences.remove(kBuf);
+      snprintf(kBuf, sizeof(kBuf), "pickup%d", i);  if (preferences.isKey(kBuf)) preferences.remove(kBuf);
+      snprintf(kBuf, sizeof(kBuf), "pin%d",    i);  if (preferences.isKey(kBuf)) preferences.remove(kBuf);
+    }
+    preferences.putBool("nvsMigV2", true);
+    logf("NVS: Migration V2 abgeschlossen (Slots %d-%d entfernt).", activeSlots, MAX_SLOTS - 1);
   }
 
   // Wenn Firmware-Version neu (USB-Flash), NVS-FS-Version zurücksetzen
@@ -932,10 +1192,8 @@ void setup() {
   }
 
   // --- 7. FINALE DIENSTE ---
-  // TLS-Zertifikat für Telegram setzen (DigiCert High Assurance EV Root CA)
-  // TLS-verschlüsselt, aber ohne Zertifikats-Pinning.
-  // Telegram rotiert Intermediate-CAs regelmäßig — setCACert() würde nach jedem CA-Wechsel brechen.
-  // setInsecure() ist für diesen Kontext die stabilere Wahl.
+  // TLS ohne Zertifikats-Pinning: Telegram rotiert Intermediate-CAs regelmaessig,
+  // setCACert() wuerde bei jedem CA-Wechsel brechen — setInsecure() ist hier stabiler.
   secured_client.setInsecure();
   setupWebServer();
   sendHanimatStatusPing();
@@ -959,7 +1217,7 @@ void setup() {
 //                            MAIN LOOP
 // =================================================================
 void loop() {
-  // Always handle web server clients
+  // Webserver-Clients immer bedienen
   server.handleClient();
   lv_timer_handler();
 
@@ -974,22 +1232,22 @@ void loop() {
     );
   }
 
-  // --- Non-blocking Error Display Timeout ---
+  // --- Nicht-blockierender Fehleranzeige-Timeout ---
   if (errorDisplayActive && millis() >= errorDisplayUntil) {
     errorDisplayActive = false;
     resetDisplayToDefault();
   }
 
-  // --- Non-blocking Melody Player ---
+  // --- Nicht-blockierender Melodie-Player ---
   processMelody();
 
-  // --- Non-blocking Single Beep (Münze/Schein) ---
+  // --- Nicht-blockierender Einzel-Beep (Münze/Schein) ---
   processSingleBeep();
 
-  // --- Non-blocking Relay-Test Jobs ---
+  // --- Nicht-blockierende Relais-Test-Jobs ---
   processRelayTestJobs();
 
-// --- Reset-Logik: Non-blocking State Machine ---
+// --- Reset-Logik: Nicht-blockierende Zustandsmaschine ---
   if (!resetPinIsFloating) {
     bool btnPressed = (digitalRead(WIFI_RESET_BUTTON) == LOW);
 
@@ -1004,31 +1262,57 @@ void loop() {
         // Signal instabil (Rauschen) – abbrechen
         resetButtonState = ResetButtonState::NONE;
       } else if (millis() - resetDetectStartTime >= 2000) {
-        // 2 Sekunden stabil gedrückt → Bestätigungs-Dialog zeigen
-        resetButtonState = ResetButtonState::CONFIRMING;
+        // 2 Sekunden stabil gedrückt → Auswahl-Menü zeigen
+        resetButtonState = ResetButtonState::MENU;
         resetConfirmStartTime = millis();
-        logMessage("Reset-Knopf stabil gedrueckt. Warte auf # am Keypad...");
+        logMessage("Reset-Knopf gedrueckt. Auswahl: 1=WLAN, 2=Werksreset, *=Abbruch");
         lastDrawnMode = DrawnMode::NONE;
-        displaySystemResetScreen(false);
+        displayResetScreen(0);
         playKeyPressBeep();
       }
 
-    } else if (resetButtonState == ResetButtonState::CONFIRMING) {
+    } else if (resetButtonState == ResetButtonState::MENU) {
+      char key = manualGetKeyState();
+      if (key == '1' || key == '2') {
+        resetChoice = key - '0';
+        resetButtonState = ResetButtonState::CONFIRM;
+        resetConfirmStartTime = millis();
+        displayResetScreen(resetChoice); // 1 = WLAN-Bestaetigung, 2 = Werksreset-Bestaetigung
+        playKeyPressBeep();
+      } else if (key == '*' || millis() - resetConfirmStartTime >= 15000) {
+        logMessage("Reset-Menue abgebrochen.");
+        resetButtonState = ResetButtonState::NONE;
+        resetDisplayToDefault();
+      }
+
+    } else if (resetButtonState == ResetButtonState::CONFIRM) {
       char key = manualGetKeyState();
       if (key == '#') {
-        logMessage("RESET BESTAETIGT!");
-        lastDrawnMode = DrawnMode::NONE;
-        displaySystemResetScreen(true);
-        playErrorSound();
-        delay(2000); // Kurze Pause vor Neustart – hier bewusst OK
-        preferences.begin("hanimat", false);
-        preferences.clear();
-        preferences.end();
-        WiFiManager wm;
-        wm.resetSettings();
-        logMessage("Factory reset complete. Restarting...");
-        ESP.restart();
-      } else if (millis() - resetConfirmStartTime >= 5000) {
+        if (resetChoice == 1) {
+          // Nur WLAN: Zugangsdaten löschen, alle Einstellungen bleiben
+          logEvent("WLAN-RESET bestaetigt (Einstellungen bleiben erhalten).");
+          lastDrawnMode = DrawnMode::NONE;
+          displayResetScreen(3);
+          playKeyPressBeep();
+          delay(2000); // Kurze Anzeige vor Neustart – hier bewusst OK
+          WiFiManager wm;
+          wm.resetSettings();
+          ESP.restart();
+        } else {
+          logEvent("WERKSRESET bestaetigt!");
+          lastDrawnMode = DrawnMode::NONE;
+          displayResetScreen(4);
+          playErrorSound();
+          delay(2000); // Kurze Pause vor Neustart – hier bewusst OK
+          preferences.begin("hanimat", false);
+          preferences.clear();
+          preferences.end();
+          WiFiManager wm;
+          wm.resetSettings();
+          logMessage("Factory reset complete. Restarting...");
+          ESP.restart();
+        }
+      } else if (key == '*' || millis() - resetConfirmStartTime >= 10000) {
         logMessage("Reset abgebrochen.");
         resetButtonState = ResetButtonState::NONE;
         resetDisplayToDefault();
@@ -1041,9 +1325,9 @@ void loop() {
     saveCreditToNVS();
   }
 
-  // --- Main state machine ---
+  // --- Haupt-Zustandsmaschine ---
   if (currentSystemState != CurrentSystemState::OTA_UPDATE && !isSumUpTransactionActive) {
-    // Timeout for user inactivity, resetting the screen to default
+    // Timeout bei Inaktivitaet — Display auf Standardansicht zuruecksetzen
     if (millis() - lastUserInteractionTime > DISPLAY_TIMEOUT) {
       if (currentSystemState != CurrentSystemState::IDLE) {
         logMessage("Display timeout. Reverting to idle screen.");
@@ -1059,13 +1343,13 @@ void loop() {
       displayNeedsUpdate = true;
     }
 
-    // Timeout for slot selection
+    // Timeout für Fach-Auswahl
     if (selectedSlot != -1 && (millis() - slotSelectedTime > SLOT_SELECTION_TIMEOUT)) {
         logMessage("Slot selection timed out. Resetting selection.");
         resetDisplayToDefault();
     }
 
-    // Process all inputs and jobs
+    // Alle Eingaben und Jobs verarbeiten
     processKeypad();
     processAcceptedCoin();
     processBillAcceptorPulses();
@@ -1080,7 +1364,7 @@ void loop() {
     }
   }
 
-  // --- SUMUP Button Check (non-blocking debounce) ---
+  // --- SumUp-Button-Check (nicht-blockierendes Entprellen) ---
   // Nur prüfen wenn SumUp aktiviert ist UND keine Transaktion läuft
   static unsigned long sumupBtnPressTime = 0;
   if (sumupEnabled && !isSumUpTransactionActive) {
@@ -1099,9 +1383,9 @@ void loop() {
   // --- SUMUP STATUS CHECK (läuft nur, wenn eine Zahlung aktiv ist) ---
   if (isSumUpTransactionActive) {
     unsigned long now = millis();
-    lastUserInteractionTime = now; // Prevent display sleep during payment
+    lastUserInteractionTime = now; // Display-Sleep waehrend Zahlung verhindern
 
-    // --- NEU: Abbruch sofort prüfen (Responsive) ---
+    // --- Abbruch sofort prüfen (für reaktionsschnelle Bedienung) ---
     char key = manualGetKeyState();
     if (key == '*') {
         logMessage("SumUp: Abbruch durch Benutzer (* Taste)");
@@ -1111,14 +1395,14 @@ void loop() {
         currentSumUpTxId = "";
         
         displayErrorMessage("ZAHLUNG", "ABGEBROCHEN");
-        // Reset state ensures we go back to IDLE
+        // Zustands-Reset stellt sicher, dass wir zurueck in IDLE gehen
         return; // Loop iteration beenden
     }
     // -----------------------------------------------
 
     // 1. TIMEOUT PRÜFEN
     if (now - sumUpStartTime > sumupTimeout) {
-        logMessage("SumUp: Zeit abgelaufen (Timeout)!");
+        logEvent("SumUp: Zeit abgelaufen (Timeout)!");
         sumUp.cancel(); // Sendet Abbruch-Befehl an Terminal
         isSumUpTransactionActive = false;
         currentSumUpTxId = "";
@@ -1140,15 +1424,15 @@ void loop() {
 
 if (status == "SUCCESSFUL") {
             logMessage(">>> SUMUP ZAHLUNG ERFOLGREICH! <<<");
-            
-            // Logik für korrekte Verrechnung:
-            // Der via Karte bezahlte Restbetrag (remainingCents = Preis - Münzguthaben)
-            // wird zum bestehenden Guthaben addiert — nicht überschrieben.
-            // Ergebnis: creditCents == slotPriceCents[selectedSlot], scheduleDispense() zieht ab.
-            int paidBySumUp = slotPriceCents[selectedSlot] - creditCents;
-            if (paidBySumUp > 0) creditCents += paidBySumUp;
 
-            logf("SumUp: Zahlung abgeschlossen. Internes Guthaben angepasst auf: %s EUR", centsToEurStr(creditCents).c_str());
+            // WICHTIG: Gutgeschrieben wird der bei Zahlungsstart tatsaechlich an SumUp
+            // geschickte Betrag (pendingSumUpAmountCents), nicht der aktuelle Fachpreis.
+            addCredit(pendingSumUpAmountCents);
+
+            logEventf("SumUp: Zahlung abgeschlossen (%s EUR abgerechnet, %s). Internes Guthaben: %s EUR",
+                 centsToEurStr(pendingSumUpAmountCents).c_str(),
+                 pendingSumUpWasMixed ? "Bar+Karte" : "Karte",
+                 centsToEurStr(creditCents).c_str());
 
             // Guthaben sofort sichern (Absturzsicherheit vor Warenausgabe)
             saveCreditToNVS(true);
@@ -1157,14 +1441,14 @@ if (status == "SUCCESSFUL") {
             isSumUpTransactionActive = false; // Stoppt das Polling
             currentSumUpTxId = "";
             currentSystemState = CurrentSystemState::IDLE; // Zurück in den Standardmodus
-            
-            // Warenausgabe starten
+
+            // Warenausgabe starten (Bar+Karte, falls vor der Kartenzahlung schon Guthaben vorhanden war)
             logf("Starte Warenausgabe fuer Fach %d", selectedSlot + 1);
-            scheduleDispense(selectedSlot, PaymentMethod::SUMUP);
-            
+            scheduleDispense(selectedSlot, pendingSumUpWasMixed ? PaymentMethod::MIXED : PaymentMethod::SUMUP);
+
         }
         else if (status == "FAILED" || status == "CANCELLED") {
-            logf("SumUp: Zahlung fehlgeschlagen oder abgebrochen (%s).", status.c_str());
+            logEventf("SumUp: Zahlung fehlgeschlagen oder abgebrochen (%s).", status.c_str());
             isSumUpTransactionActive = false; // Polling beenden
             currentSumUpTxId = "";
             displayErrorMessage("ZAHLUNG", "abgebrochen");
@@ -1173,13 +1457,13 @@ if (status == "SUCCESSFUL") {
     }
   }
 
-  // Auto-logout from web interface after timeout
+  // Automatischer Logout aus der Weboberflaeche nach Timeout
   if (activeSessionToken.length() > 0 && (millis() - lastActivityTimeWeb > WEB_TIMEOUT)) {
     activeSessionToken = "";
     logMessage("Web: Session abgelaufen (Inaktivität).");
   }
 
-  // Update display only when needed.
+  // Display nur aktualisieren, wenn noetig.
   // Gesperrt während: OTA, SumUp-Zahlung, aktiver Error-Anzeige (verhindert Überschreiben durch Münzeinwurf etc.)
   if (displayNeedsUpdate
       && currentSystemState != CurrentSystemState::OTA_UPDATE
@@ -1189,7 +1473,7 @@ if (status == "SUCCESSFUL") {
     displayNeedsUpdate = false;
   }
 
-  // Periodically check WiFi connection and attempt to reconnect if lost
+  // WLAN-Verbindung periodisch pruefen und bei Verlust neu verbinden
   static unsigned long lastWiFiCheckTime = 0;
   bool offlineMode = (digitalRead(OFFLINE_MODE_PIN) == LOW);
   if (!offlineMode && (millis() - lastWiFiCheckTime > 30000)) {
@@ -1208,53 +1492,72 @@ if (status == "SUCCESSFUL") {
   // --- TELEGRAM: Nicht-blockierende Nachrichtenverarbeitung ---
   processTelegramQueue();
 
-  // --- HEAP MONITORING ---
+  // --- HEAP-ÜBERWACHUNG ---
   checkHeapMonitor();
+
+  // --- AUTOMATISCHER GUTHABEN-RESET ---
+  checkAutoCreditReset();
+  checkIdleCreditReset();
+  checkCreditWarnThreshold();
   yield(); // CPU an andere Tasks abgeben (Watchdog, WiFi-Stack) ohne zu blockieren
 }
 
 // =================================================================
-//                      CORE LOGIC
+//                      KERN-LOGIK
 // =================================================================
 void resetDisplayToDefault() {
   selectedSlot = -1;
   keypadInputBuffer = "";
-  currentSystemState = CurrentSystemState::IDLE; 
+  pinEntryBuffer = "";
+  currentSystemState = CurrentSystemState::IDLE;
   displayNeedsUpdate = true;
   lastUserInteractionTime = millis();
 }
 
 void processKeypad() {
   char key = manualGetKeyState();
-  if (key == 0) return; // No new key press
+  if (key == 0) return; // Kein neuer Tastendruck
 
   playKeyPressBeep();
   logf("Keypad: Processed Key: '%c'", key);
   lastUserInteractionTime = millis();
+
+  if (currentSystemState == CurrentSystemState::PICKUP_PIN_ENTRY) {
+    processPickupPinKey(key);
+    return;
+  }
+
   currentSystemState = CurrentSystemState::USER_INTERACTION;
 
   if (isdigit(key)) {
     lastKeypadInputTime = millis();
 
-    // Logic to handle 1 or 2-digit slot numbers
+    // Logik fuer 1- oder 2-stellige Fachnummern
     if (keypadInputBuffer.length() >= 2) {
-      keypadInputBuffer = ""; // Reset buffer if it's already full
+      keypadInputBuffer = ""; // Buffer voll -> zuruecksetzen
     }
     keypadInputBuffer += key;
     logf("Keypad: Buffer updated to: %s", keypadInputBuffer.c_str());
     processKeypadSelection();
 
-  } else if (key == '#') { // Confirm selection or purchase
+  } else if (key == '#') { // Auswahl bestaetigen oder Kauf ausloesen
     if (keypadInputBuffer.length() > 0) {
       logf("Keypad: '#' pressed. Finalizing selection from buffer: %s", keypadInputBuffer.c_str());
       processKeypadSelection();
     }
       
     if (selectedSlot != -1) {
+      bool pickupEmpty = isPickupSlotEmpty(selectedSlot);
       if (slotLocked[selectedSlot]) {
         displayErrorMessage("FACH " + String(selectedSlot + 1), "gesperrt!");
-      } else if (!slotAvailable[selectedSlot]) {
+      } else if (!slotAvailable[selectedSlot] || pickupEmpty) {
         displayErrorMessage("FACH " + String(selectedSlot + 1), "ist leer!");
+      } else if (slotIsPickup[selectedSlot]) {
+        logf("Abholfach: Fach %d ausgewaehlt, wechsle zu PIN-Eingabe.", selectedSlot + 1);
+        pinEntryBuffer = ""; // Kunde tippt den kompletten Code selbst, inkl. der eigenen fuehrenden "0"
+        slotSelectedTime = millis(); // Timer fuer SLOT_SELECTION_TIMEOUT neu starten (PIN-Eingabe braucht mehr Zeit)
+        currentSystemState = CurrentSystemState::PICKUP_PIN_ENTRY;
+        displayNeedsUpdate = true;
       } else if (creditCents >= slotPriceCents[selectedSlot]) {
         logf("Purchase attempt: Slot %d, Credit: %s EUR, Price: %s EUR.", selectedSlot + 1, centsToEurStr(creditCents).c_str(), centsToEurStr(slotPriceCents[selectedSlot]).c_str());
         scheduleDispense(selectedSlot, PaymentMethod::CASH);
@@ -1265,9 +1568,9 @@ void processKeypad() {
     } else {
       displayErrorMessage("KEIN FACH", "gewaehlt!");
     }
-    keypadInputBuffer = ""; // Clear buffer after '#'
+    keypadInputBuffer = ""; // Buffer nach '#' leeren
     
-} else if (key == '*') { // Cancel/reset
+} else if (key == '*') { // Abbrechen/zuruecksetzen
     logMessage("Keypad: '*' pressed. Resetting selection.");
     resetDisplayToDefault();
 }
@@ -1275,7 +1578,7 @@ void processKeypad() {
 }
 
 /**
- * @brief Processes the current keypad input buffer to select a slot.
+ * @brief Verarbeitet den Tastatur-Eingabepuffer zur Fachauswahl.
  */
 void processKeypadSelection() {
   if (keypadInputBuffer.isEmpty()) return;
@@ -1289,10 +1592,10 @@ void processKeypadSelection() {
     slotSelectedTime = millis();
     currentSystemState = CurrentSystemState::USER_INTERACTION;
 
-    // Check if the selection can be considered final (e.g., for single-digit slots or after 2 digits)
+    // Pruefen, ob die Auswahl final ist (z.B. bei einstelligen Faechern oder nach 2 Ziffern)
     bool isFinal = (keypadInputBuffer.length() == 2) || (activeSlots < 10);
     if (keypadInputBuffer.length() == 1 && activeSlots >= 10) {
-        // If first digit is too high for a valid 2-digit number, it's final
+        // Falls die erste Ziffer fuer eine gueltige 2-stellige Zahl zu hoch ist, ist die Auswahl final
         if (keypadInputBuffer.toInt() > activeSlots / 10) {
             isFinal = true;
         }
@@ -1312,7 +1615,7 @@ void processKeypadSelection() {
       selectedSlot = -1;
       keypadInputBuffer = "";
     } else {
-      // 1-stellige Eingabe ungültig (z.B. "0") — sofort leeren, kein stuck state
+      // 1-stellige Eingabe ungültig (z.B. "0") — sofort leeren, kein Haengenbleiben
       logf("Keypad: Ungueltige Einzelziffer '%s'. Buffer geleert.", keypadInputBuffer.c_str());
       keypadInputBuffer = "";
       selectedSlot = -1;
@@ -1322,10 +1625,35 @@ void processKeypadSelection() {
 }
 
 /**
- * @brief Activates or deactivates a relay for a specific slot via I2C.
- * @param slot The slot index (0-15).
- * @param activate True to activate the relay, false to deactivate.
- * @return True on success, false on I2C communication failure.
+ * @brief Verarbeitet einen Tastendruck waehrend der PIN-Eingabe fuer ein Abholfach.
+ *        Wird von processKeypad() aufgerufen, solange currentSystemState == PICKUP_PIN_ENTRY.
+ */
+void processPickupPinKey(char key) {
+  if (isdigit(key)) {
+    if (pinEntryBuffer.length() < 4) {
+      pinEntryBuffer += key;
+      slotSelectedTime = millis(); // Aktive Eingabe verlaengert das Zeitfenster
+      logf("Abholfach: PIN-Eingabe: %d/%d Ziffern.", pinEntryBuffer.length(), strlen(slotPinCode[selectedSlot]));
+    }
+  } else if (key == '#') {
+    if (pinEntryBuffer == slotPinCode[selectedSlot]) {
+      logf("Abholfach: PIN korrekt fuer Fach %d.", selectedSlot + 1);
+      scheduleDispense(selectedSlot, PaymentMethod::PICKUP);
+    } else {
+      logf("Abholfach: PIN falsch fuer Fach %d.", selectedSlot + 1);
+      displayErrorMessage("CODE FALSCH", "bitte erneut");
+    }
+    pinEntryBuffer = "";
+  } else if (key == '*') {
+    logMessage("Abholfach: PIN-Eingabe abgebrochen.");
+    resetDisplayToDefault();
+  }
+  displayNeedsUpdate = true;
+}
+
+/**
+ * @brief Aktiviert oder deaktiviert per I2C das Relais für ein Fach.
+ * @return True bei Erfolg, false bei I2C-Kommunikationsfehler.
  */
 bool controlSlotRelay(int slot, bool activate) {
   if (slot < 0 || slot >= MAX_SLOTS) {
@@ -1366,17 +1694,17 @@ bool controlSlotRelay(int slot, bool activate) {
 char manualGetKeyState() {
   char currentPhysicalKey = 0;
 
-  // Iterate through rows
+  // Zeilen durchlaufen
   for (int r = 0; r < KEYPAD_ROWS; r++) {
-    digitalWrite(rowPins[r], HIGH); // Activate one row
-    // Check all columns in that row
+    digitalWrite(rowPins[r], HIGH); // Eine Zeile aktivieren
+    // Alle Spalten dieser Zeile pruefen
     for (int c = 0; c < KEYPAD_COLS; c++) {
       if (digitalRead(colPins[c]) == HIGH) {
         currentPhysicalKey = keys[r][c];
         break;
       }
     }
-    digitalWrite(rowPins[r], LOW); // Deactivate the row
+    digitalWrite(rowPins[r], LOW); // Zeile deaktivieren
     if (currentPhysicalKey != 0) {
       break;
     }
@@ -1384,17 +1712,17 @@ char manualGetKeyState() {
 
   unsigned long now = millis();
 
-  // Debounce logic
+  // Entprell-Logik
   if (currentPhysicalKey != lastPhysicallyPressedKey) {
     lastKeyPressTime = now;
     lastPhysicallyPressedKey = currentPhysicalKey;
     if (currentPhysicalKey == 0) {
-        lastReturnedKey = 0; // Reset returned key when released
+        lastReturnedKey = 0; // Zurueckgegebene Taste beim Loslassen zuruecksetzen
     }
-    return 0; // Return nothing on initial press/release
+    return 0; // Bei erstem Druck/Loslassen nichts zurueckgeben
   }
 
-  // If key is held down longer than the debounce period, return it once
+  // Wenn Taste laenger als die Entprellzeit gehalten wird, einmal zurueckgeben
   if (currentPhysicalKey != 0 && (now - lastKeyPressTime > KEYPAD_DEBOUNCE_PERIOD)) {
     if (currentPhysicalKey != lastReturnedKey) {
       lastReturnedKey = currentPhysicalKey;
@@ -1402,5 +1730,5 @@ char manualGetKeyState() {
     }
   }
    
-  return 0; // No valid key press
+  return 0; // Kein gueltiger Tastendruck
 }

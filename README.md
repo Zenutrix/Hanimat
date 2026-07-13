@@ -10,7 +10,7 @@
   <a href="https://www.hanimat.at/installer/"><img src="https://img.shields.io/badge/⚡_Web--Installer-Jetzt_flashen-success?style=flat-square" /></a>
   <a href="https://t.me/+igwol5kmQGpiYWFk"><img src="https://img.shields.io/badge/Community-Telegram-2CA5E0?style=flat-square&logo=telegram&logoColor=white" /></a>
   <a href="https://status.hanimat.at"><img src="https://img.shields.io/badge/Live_Status-status.hanimat.at-brightgreen?style=flat-square" /></a>
-  <img src="https://img.shields.io/badge/Firmware-V1.5.2-informational?style=flat-square" />
+  <img src="https://img.shields.io/badge/Firmware-V1.5.3-informational?style=flat-square" />
   <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/"><img src="https://img.shields.io/badge/Lizenz-CC%20BY--NC--SA%204.0-lightgrey?style=flat-square" /></a>
 </p>
 
@@ -19,11 +19,13 @@
 ## Inhaltsverzeichnis
 
 - [Was ist HANIMAT?](#-was-ist-hanimat)
+- [Neu in V1.5.3](#-neu-in-v153)
 - [Demo & Screenshots](#-demo--screenshots)
 - [Features](#-features)
 - [Voraussetzungen](#-voraussetzungen)
 - [Installation](#-installation)
 - [Konfiguration](#️-konfiguration)
+- [Abholfächer](#-abholfächer-pin-code)
 - [Hardware & Pinbelegung](#-hardware--pinbelegung)
 - [Zahlungs-Mapping](#-zahlungs-mapping-münzen--banknoten)
 - [SumUp-Einrichtung](#-sumup-einrichtung)
@@ -44,6 +46,18 @@ HANIMAT ist eine **vollständige Open-Source-Lösung** für einen selbst gebaute
 - 🛠️ **DIY-freundlich** – Aufgebaut auf einer eigenen PCB mit MOSFETs sowie einer optionalen Erweiterungsplatine
 - 📐 **Massiv skalierbar** – Standard 16 Fächer, mit Erweiterungsplatinen bis zu 128 Fächer möglich
 - 🤝 **Community-getrieben** – Weiterentwickelt durch und für seine Nutzer
+
+---
+
+## ✨ Neu in V1.5.3
+
+- 📦 **Abholfächer mit PIN-Code** – Beliebige Fächer als Abholfach definieren: Kunde wählt das Fach, drückt `#`, gibt den 4-stelligen Einmal-Code ein und das Fach öffnet sich – ideal für vorbestellte Ware ([Details](#-abholfächer-pin-code))
+- 🧾 **Ereignis-Log** – Wichtige Ereignisse (Zahlungen, Preisänderungen, Fehler, Admin-Aktionen) werden dauerhaft gespeichert und sind mehrere Tage rückverfolgbar (Web-Interface → Logs)
+- 💰 **Guthaben-Absicherung** – Einstellbare Obergrenzen für Guthaben und manuelle Aufladung, automatischer Guthaben-Reset (täglich zur Uhrzeit und/oder nach Inaktivität), optionale Telegram-Warnung bei Überschreiten einer Guthaben-Schwelle
+- 💳 **Mischzahlung sauber ausgewiesen** – Bar + Karte wird in Verkaufslog und Statistik als eigene Kategorie geführt; der Kassenstand zählt nur den tatsächlichen Bar-Anteil
+- 🖥️ **Web-Interface überarbeitet** – Professionelle SVG-Icons statt Emojis, neue Slot-Konfiguration mit aufklappbaren 16er-Gruppen (übersichtlich bis 128 Fächer), Buttons „Alle Fächer öffnen" und „Leere Fächer öffnen"
+- 📶 **WLAN-Reset ohne Datenverlust** – Der Reset-Knopf bietet jetzt ein Auswahlmenü: nur WLAN neu einrichten (alle Einstellungen bleiben) oder kompletter Werksreset ([Details](#reset-knopf-wlan-reset--werksreset))
+- 🛡️ **Stabilität & Fixes** – SumUp-Timeout auf 80 s erhöht, Preis-Snapshot bei Kartenzahlung, Kauf hat Vorrang vor Relais-Sequenzen, zahlreiche Detailverbesserungen
 
 ---
 
@@ -71,15 +85,17 @@ HANIMAT ist eine **vollständige Open-Source-Lösung** für einen selbst gebaute
 | Bereich | Details |
 | :--- | :--- |
 | **Zahlungsarten** | Münzprüfer, Banknotenprüfer, SumUp EC-Terminal (Karte / NFC / Smartphone) |
-| **Hybrid-Zahlung** | Bargeld + Kartenzahlung für den Restbetrag kombinierbar |
-| **Display** | ILI9341 TFT 320×240, vollständige Farb-UI mit Statusanzeigen |
-| **Web-Interface** | Responsives Admin-Panel, vollständig bedienbar vom Smartphone |
+| **Hybrid-Zahlung** | Bargeld + Kartenzahlung für den Restbetrag kombinierbar, in der Statistik als „Bar + Karte" ausgewiesen |
+| **Abholfächer** | Fächer mit 4-stelligem Einmal-PIN statt Preis – für vorbestellte/reservierte Ware |
+| **Display** | ILI9341 TFT 320×240, LVGL-Farb-UI mit Statusanzeigen |
+| **Web-Interface** | Responsives Admin-Panel mit SVG-Icons, vollständig bedienbar vom Smartphone, Hell-/Dunkel-Modus |
 | **Fächer** | Standard 16 Fächer, mit Erweiterungsplatine bis zu 128 Fächer skalierbar |
-| **Preise** | Individuelle Preise pro Fach, Bulk-Eingabe per Tabelle |
-| **Benachrichtigungen** | Telegram-Bot: Verkäufe, Bestandswarnungen, Absturzberichte, Heap-Warnungen |
+| **Preise** | Individuelle Preise pro Fach, Bulk-Eingabe, übersichtliche 16er-Gruppen |
+| **Guthaben-Schutz** | Einstellbare Obergrenzen (Guthaben/Aufladung), automatischer Reset per Uhrzeit oder Inaktivität |
+| **Benachrichtigungen** | Telegram-Bot: Verkäufe, Bestandswarnungen, Guthaben-Schwelle, Absturzberichte, Brute-Force-Alarm |
 | **Firmware-Updates** | OTA direkt im Admin-Panel – kein USB-Kabel nach der Erstinstallation nötig |
 | **Sicherheit** | Login mit Session-Token, Brute-Force-Schutz (automatische IP-Sperre) |
-| **Statistik** | Verkaufslog, Umsatzübersicht, Absturzzähler mit Reset-Funktion |
+| **Statistik & Logs** | Verkaufslog, Umsatzübersicht, dauerhaftes Ereignis-Log (mehrere Tage), Absturzzähler |
 | **Stabilität** | Non-blocking Loop, Heap-Monitoring, Absturzprotokoll via `esp_reset_reason()` |
 
 ---
@@ -144,12 +160,35 @@ Alle Einstellungen sind über das **Web-Interface** erreichbar – kein Editiere
 
 | Bereich | Beschreibung |
 | :--- | :--- |
-| **System** | Passwort, Display-Timeout, Offline-Modus |
-| **Fächer** | Anzahl, Preise, Verfügbarkeit, Sperren einzelner Fächer |
-| **Zahlung** | Münzwerte, Banknotenwerte, Gutschrift-Funktion |
-| **SumUp** | API-Key, Merchant-ID, Reader pairen / trennen / prüfen |
-| **Telegram** | Bot-Token, Chat-ID, Benachrichtigungstypen aktivieren |
+| **Einstellungen** | Zeitsteuerung (Timeouts, Ausgabezeit), Guthaben-Obergrenzen, automatische Guthaben-Resets |
+| **Fächer** | Anzahl, Preise, Abholfach-Modus mit PIN-Code, Verfügbarkeit, Sperren einzelner Fächer |
+| **Zahlung** | Münzwerte, Banknotenwerte, Gutschrift-Funktion (max. Aufladung einstellbar) |
+| **SumUp** | API-Key, Merchant-ID, Reader pairen / trennen / prüfen, Timeout |
+| **Telegram** | Bot-Token, Chat-ID, Benachrichtigungstypen inkl. Guthaben-Schwelle |
+| **Logs** | Ereignis-Log (dauerhaft, mehrere Tage) und Live-Log (technische Details) |
 | **OTA** | Firmware automatisch prüfen & installieren oder manuell `.bin` hochladen |
+
+---
+
+## 📦 Abholfächer (PIN-Code)
+
+Beliebige Fächer lassen sich als **Abholfach** definieren – perfekt für vorbestellte oder reservierte Ware: Statt eines Preises hinterlegst du einen **4-stelligen Einmal-Code**, mit dem der Kunde das Fach selbstständig öffnen kann.
+
+**Einrichtung (Web-Interface → Slot Config):**
+1. Beim gewünschten Fach den Schalter **„Abholfach"** aktivieren (das Preisfeld wird zum Code-Feld)
+2. 4-stelligen Code eintragen und speichern – das Fach ist damit automatisch als befüllt markiert
+3. Den Code dem Kunden mitteilen (z.B. per Telefon oder Nachricht)
+
+**Ablauf für den Kunden am Automaten:**
+1. Fachnummer am Keypad wählen – Display zeigt **ABHOLFACH**
+2. Mit `#` bestätigen – die PIN-Eingabe erscheint
+3. 4-stelligen Code eingeben und mit `#` bestätigen → Fach öffnet sich
+4. `*` bricht jederzeit ab; bei falschem Code erscheint „CODE FALSCH" und der Vorgang startet von vorne
+
+**Wichtig zu wissen:**
+- Jeder Code gilt **einmalig**: Nach der Abholung ist das Fach leer und der Code verbraucht. Zum Wiederbefüllen einfach einen neuen Code eintragen.
+- Abholfächer sind kostenlos (kein Guthaben nötig) und tauchen im Verkaufslog als eigene Kategorie **„Abholung"** mit 0,00 € auf.
+- Die generischen „Auffüllen"-Buttons überspringen Abholfächer ohne Code – befüllt wird immer über einen neuen Code in der Slot-Konfiguration.
 
 ---
 
@@ -177,6 +216,7 @@ Alle Pinbelegungen direkt aus der Firmware (`src/main.cpp`):
 | **Banknoten-Inhibit** | GPIO 33 | Sperrt Banknoteneinzug |
 | **Buzzer** | GPIO 25 | Aktiver Buzzer |
 | **SumUp-Taste** | GPIO 0 | Kartenzahlung auslösen (BOOT-Taster) |
+| **Reset-Knopf** | GPIO 34 | 2 s halten → Reset-Menü (siehe unten) |
 | **Offline-Mode Jumper** | GPIO 27 | LOW = kein WiFi, kein SumUp |
 
 ### Keypad (4×3 Matrix)
@@ -200,6 +240,18 @@ Layout:   1  2  3
 | SDA | GPIO 21 |
 | SCL | GPIO 22 |
 | I2C-Adresse | 0x20 |
+
+### Reset-Knopf (WLAN-Reset & Werksreset)
+
+Den Reset-Knopf (GPIO 34) **2 Sekunden gedrückt halten** – am Display erscheint das Reset-Menü:
+
+| Taste | Aktion |
+| :--- | :--- |
+| `1` | **Nur WLAN zurücksetzen** – löscht ausschließlich die WLAN-Zugangsdaten. Alle Einstellungen (Preise, Fächer, Abholfach-Codes, SumUp, Telegram, Statistik) bleiben erhalten. Nach dem Neustart öffnet sich der `HANIMAT-Setup`-Hotspot zur neuen WLAN-Einrichtung – ideal, wenn der Automat zuhause eingerichtet und an einem anderen Ort aufgestellt wird. |
+| `2` | **Werksreset** – löscht **alle** Einstellungen und Daten. |
+| `*` | Abbrechen |
+
+Nach der Auswahl mit `1` oder `2` zeigt das Display eine Sicherheitsabfrage – erst die Bestätigung mit `#` führt den Reset aus (`*` bricht ab, ohne Eingabe wird automatisch abgebrochen).
 
 ---
 
@@ -241,7 +293,7 @@ HANIMAT unterstützt bargeldloses Bezahlen über ein **SumUp Solo**-Terminal (Ka
 1. Web-Interface → **SumUp** → API-Key und Merchant-ID eintragen → „Speichern"
 2. SumUp Solo-Terminal in den Pairing-Modus versetzen (Terminal → Einstellungen → Koppeln)
 3. Den angezeigten **8-stelligen Code** im Web-Interface unter „Pairing" eingeben → „Koppeln"
-4. Button **„🔌 Reader prüfen"** klicken – bei Erfolg ist SumUp sofort einsatzbereit
+4. Button **„Reader prüfen"** klicken – bei Erfolg ist SumUp sofort einsatzbereit
 
 **Zahlungsablauf:** Produkt wählen → SumUp-Taste drücken → Terminal zeigt Betrag → Karte/NFC → Ausgabe automatisch. Mischzahlung (Bargeld + Karte für den Restbetrag) wird vollautomatisch unterstützt.
 
@@ -251,7 +303,7 @@ HANIMAT unterstützt bargeldloses Bezahlen über ein **SumUp Solo**-Terminal (Ka
 
 Nach der Erstinstallation musst du den Automaten **nie wieder aufschrauben**. Updates werden direkt im Admin-Panel verwaltet:
 
-**Automatisch (empfohlen):** Web-Interface → **System** → **Firmware-Update** → HANIMAT prüft auf neue Version und installiert Firmware + Web-Interface mit einem Klick. Nach dem Neustart ist alles aktuell.
+**Automatisch (empfohlen):** Web-Interface → **Update** → HANIMAT prüft auf neue Version und installiert Firmware + Web-Interface mit einem Klick. Nach dem Neustart ist alles aktuell.
 
 **Manuell:** Im selben Bereich können Firmware (`firmware.bin`) und Web-Interface (`littlefs.bin`) auch separat als Datei hochgeladen werden – der ESP32 flasht sich selbst und startet automatisch neu.
 
@@ -265,7 +317,7 @@ Die Firmware sendet einmal pro Stunde ein anonymes Lebenszeichen an unsere Statu
 
 **Was wird übertragen:** Ausschließlich Firmware-Version und Herkunftsland – sonst nichts.
 
-**Deaktivierung:** Web-Interface → System → **Community-Status** deaktivieren.
+**Deaktivierung:** Web-Interface → Einstellungen → **Status-Ping** deaktivieren.
 
 ---
 

@@ -5,10 +5,7 @@
 //  Wird von main.cpp per #include eingebunden (single translation unit).
 // =================================================================
 
-/**
- * @brief Prüft den Gesamtbestand und sendet Telegram-Benachrichtigungen
- *        wenn Schwellenwerte (fast leer / komplett leer) erreicht werden.
- */
+/** @brief Prüft Gesamtbestand und meldet per Telegram, wenn er fast leer oder leer ist. */
 void checkOverallStockLevel() {
   int totalAvailable = countAvailableSlots();
 
@@ -17,27 +14,24 @@ void checkOverallStockLevel() {
       sendTelegramMessage("🚨 ALARM: Der HANIMAT ist komplett ausverkauft! Bitte auffüllen! 😭");
       emptyNotificationSent       = true;
       almostEmptyNotificationSent = true;
-      logMessage("Telegram: Alarm 'Ausverkauft' gesendet.");
+      logEvent("Telegram: Alarm 'Ausverkauft' gesendet.");
     }
   } else if (telegramNotifyAlmostEmpty && totalAvailable > 0 && totalAvailable <= almostEmptyThreshold) {
     if (!almostEmptyNotificationSent) {
       sendTelegramMessage("⚠️ INFO: Der HANIMAT ist fast leer!\nVerfügbare Fächer: " + String(totalAvailable));
       almostEmptyNotificationSent = true;
-      logMessage("Telegram: Info 'Fast leer' gesendet (" + String(totalAvailable) + " übrig).");
+      logEvent("Telegram: Info 'Fast leer' gesendet (" + String(totalAvailable) + " übrig).");
     }
   } else if (totalAvailable > almostEmptyThreshold) {
     if (almostEmptyNotificationSent || emptyNotificationSent) {
-      logMessage("Bestand wieder ok (" + String(totalAvailable) + "). Flags zurückgesetzt.");
+      logEvent("Bestand wieder ok (" + String(totalAvailable) + "). Flags zurückgesetzt.");
     }
     almostEmptyNotificationSent = false;
     emptyNotificationSent       = false;
   }
 }
 
-/**
- * @brief Überwacht den freien Heap und sendet eine Telegram-Warnung bei
- *        Unterschreitung des Schwellenwerts. Läuft im Intervall HEAP_CHECK_INTERVAL.
- */
+/** @brief Überwacht freien Heap, warnt per Telegram bei Unterschreitung (Intervall: HEAP_CHECK_INTERVAL). */
 void checkHeapMonitor() {
   if (millis() - lastHeapCheckTime < HEAP_CHECK_INTERVAL) return;
   lastHeapCheckTime = millis();
@@ -50,17 +44,14 @@ void checkHeapMonitor() {
       sendTelegramMessage("⚠️ HANIMAT Heap-Warnung: Nur noch " +
                           String(freeHeap / 1024) + " KB frei. Neustart empfohlen.");
       heapWarningSent = true;
-      logMessage("Heap-Warnung gesendet.");
+      logEventf("Heap-Warnung gesendet (%u Bytes frei).", freeHeap);
     }
   } else {
-    heapWarningSent = false; // Reset sobald Heap sich erholt
+    heapWarningSent = false; // Reset, sobald Heap sich erholt hat
   }
 }
 
-/**
- * @brief Sendet einen periodischen Status-Heartbeat an hanimat.at.
- *        Respektiert den Hardware-Offline-Schalter und das statusEnabled-Flag.
- */
+/** @brief Sendet periodischen Status-Heartbeat an hanimat.at (respektiert Offline-Schalter & statusEnabled). */
 void sendHanimatStatusPing() {
   if (digitalRead(OFFLINE_MODE_PIN) == LOW) return;
   if (!statusEnabled) return;

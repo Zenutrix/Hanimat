@@ -48,7 +48,7 @@ h2 { font-size: 1.1rem; color: var(--text-sec); font-weight: 600; margin: 2rem 0
 .stat-heap-warn { color: #f39c12; }
 .stat-heap-crit { color: var(--danger); }
 
-/* --- SLOT TILES (THE NEW DESIGN) --- */
+/* --- SLOT TILES --- */
 .slots-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 1rem; }
 .slot-card { background: var(--bg-card); border-radius: 16px; padding: 1.2rem; border: 1px solid var(--border); position: relative; transition: transform 0.2s; display: flex; flex-direction: column; }
 .slot-card:hover { border-color: #444; transform: translateY(-2px); }
@@ -95,20 +95,60 @@ input:focus { border-color: var(--brand); }
   .menu-toggle { font-size: 1.5rem; background: none; border: none; color: white; padding: 5px; }
 
   .main { padding: 1.5rem; height: auto; overflow: visible; }
-  .top-bar { display: none; } /* Hide desktop title on mobile */
+  .top-bar { display: none; }
 
   .quick-actions { flex-direction: column; align-items: stretch; }
-  .slots-grid { grid-template-columns: 1fr; } /* 1 Column on Mobile */
+  .cfg-toolbar { flex-direction: column; align-items: stretch; }
+  .cfg-legend { margin-left: 0; padding-bottom: 0; }
+  .cfg-group-body { grid-template-columns: repeat(auto-fill, minmax(130px,1fr)); }
+  .slots-grid { grid-template-columns: 1fr; }
   .slot-card { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 1rem; }
   .slot-controls { display: flex; margin-top: 0; grid-column: 1 / -1; margin-top: 1rem; }
   .slot-controls button { flex: 1; }
   .slot-header { margin-bottom: 0; flex-direction: column; }
 }
 
-/* Utilities */
+/* --- SLOT CONFIG (Preise & Abholfächer) --- */
+.cfg-toolbar { display: flex; gap: 12px; align-items: flex-end; margin-bottom: 1.5rem; flex-wrap: wrap; }
+.cfg-toolbar .input-group { margin: 0; flex: 1; min-width: 140px; max-width: 200px; }
+.cfg-legend { display: flex; align-items: center; gap: 8px; font-size: 0.8rem; color: var(--text-sec); margin-left: auto; padding-bottom: 0.9rem; }
+.cfg-legend-dot { width: 10px; height: 10px; border-radius: 50%; background: #5c8dff; box-shadow: 0 0 8px rgba(92,141,255,0.6); flex-shrink: 0; }
+
+.cfg-group { margin-bottom: 0.9rem; border: 1px solid var(--border); border-radius: 14px; background: var(--bg-card); overflow: hidden; }
+.cfg-group summary { list-style: none; cursor: pointer; padding: 1rem 1.3rem; display: flex; align-items: center; gap: 10px; font-weight: 700; color: white; user-select: none; }
+.cfg-group summary::-webkit-details-marker { display: none; }
+.cfg-group summary::before { content: '▸'; display: inline-block; color: var(--brand); transition: transform 0.2s; font-size: 0.8rem; }
+.cfg-group[open] summary::before { transform: rotate(90deg); }
+.cfg-group-range { flex: 1; }
+.cfg-group-count { font-size: 0.75rem; font-weight: 600; color: var(--text-sec); background: rgba(255,255,255,0.05); padding: 3px 10px; border-radius: 20px; }
+.cfg-group-body { padding: 0.2rem 1.1rem 1.1rem 1.1rem; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px,1fr)); gap: 10px; border-top: 1px solid var(--border); margin-top: 0.2rem; padding-top: 1.1rem; }
+
+.cfg-slot { background: var(--bg-input); border: 1px solid var(--border); border-radius: 12px; padding: 10px; transition: border-color .2s, transform .2s; }
+.cfg-slot:hover { border-color: #444; transform: translateY(-1px); }
+.cfg-slot.is-pickup { border-color: rgba(92,141,255,0.45); }
+
+.cfg-slot-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.cfg-slot-num { font-weight: 700; font-size: 0.8rem; color: var(--text-sec); transition: color .2s; }
+.cfg-slot.is-pickup .cfg-slot-num { color: #5c8dff; }
+
+.cfg-switch { position: relative; width: 32px; height: 18px; flex-shrink: 0; }
+.cfg-switch input { opacity: 0; width: 100%; height: 100%; margin: 0; position: absolute; cursor: pointer; z-index: 1; }
+.cfg-switch-track { position: absolute; inset: 0; background: #3a3f4a; border-radius: 20px; transition: background .2s; pointer-events: none; }
+.cfg-switch-thumb { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; background: #fff; border-radius: 50%; transition: transform .2s; pointer-events: none; }
+.cfg-switch input:checked ~ .cfg-switch-track { background: #5c8dff; }
+.cfg-switch input:checked ~ .cfg-switch-thumb { transform: translateX(14px); }
+
+.cfg-slot-field { position: relative; }
+.cfg-slot-field input { width: 100%; background: var(--bg-body); border: 1px solid var(--border); color: white; padding: 8px 30px 8px 10px; border-radius: 8px; font-size: 0.86rem; text-align: center; outline: none; transition: border-color .2s; }
+.cfg-slot-field input:focus { border-color: var(--brand); }
+.cfg-slot.is-pickup .cfg-slot-field input:focus { border-color: #5c8dff; }
+.cfg-slot-field .unit { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 0.72rem; color: var(--text-sec); pointer-events: none; }
+.cfg-slot-field.cfg-code input { text-align: center; letter-spacing: 2px; padding: 8px 10px; }
+
+/* --- UTILITIES --- */
 .check-row { display: flex; align-items: center; gap: 10px; padding: 10px; background: rgba(255,255,255,0.02); border-radius: 8px; margin-bottom: 0.5rem; cursor: pointer; }
 .check-row input { width: auto; }
-#log-output{background:#000;color:#0f0;font-family:monospace;padding:1rem;height:350px;overflow-y:auto;border-radius:8px;font-size:0.8rem;border:1px solid #333;white-space:pre-wrap;word-wrap:break-word;}
+#log-output, #event-log-output{background:#000;color:#0f0;font-family:monospace;padding:1rem;height:350px;overflow-y:auto;border-radius:8px;font-size:0.8rem;border:1px solid #333;white-space:pre-wrap;word-wrap:break-word;}
 
 /* --- TIMING CONFIG TOOLTIPS --- */
 .timing-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1.5rem; }
@@ -121,7 +161,7 @@ input:focus { border-color: var(--brand); }
 .timing-section-title { font-size: 0.75rem; font-weight: 700; color: #555; text-transform: uppercase; letter-spacing: 1px; margin: 1.5rem 0 1rem 0; border-top: 1px solid var(--border); padding-top: 1.2rem; }
 .timing-section-title:first-child { margin-top: 0; border-top: none; padding-top: 0; }
 
-/* ─── LIGHT MODE ─── */
+/* --- LIGHT MODE --- */
 html.light {
   --bg-body:    #EFF1F5;
   --bg-sidebar: #FFFFFF;
@@ -149,11 +189,15 @@ html.light .info-icon .tip::after      { border-top-color: var(--border); }
 html.light .footer-info                { color: #999; border-top-color: var(--border); }
 html.light .check-row                  { background: rgba(0,0,0,0.03); }
 html.light .timing-section-title       { color: #9CA3AF; border-top-color: var(--border); }
-html.light #log-output                 { background: #111; color: #0f0; border-color: #333; }
+html.light #log-output, html.light #event-log-output { background: #111; color: #0f0; border-color: #333; }
 /* inline rgba(255,255,255,…) boxen auf hell-kompatible Werte kippen */
 html.light .stat-box[style*="rgba(255,255,255"] { background: var(--bg-card) !important; }
+html.light .cfg-group summary          { color: #111827; }
+html.light .cfg-group-count            { background: rgba(0,0,0,0.05); }
+html.light .cfg-switch-track           { background: #D1D5DB; }
+html.light .cfg-slot-field input       { color: #111827; }
 
-/* Theme-Toggle Button */
+/* --- THEME TOGGLE --- */
 #theme-toggle {
   display: block;
   width: calc(100% - 3rem);
@@ -170,3 +214,15 @@ html.light .stat-box[style*="rgba(255,255,255"] { background: var(--bg-card) !im
   transition: 0.2s;
 }
 #theme-toggle:hover { border-color: var(--brand); color: var(--brand); }
+#theme-toggle svg { width: 14px; height: 14px; vertical-align: -2px; margin-right: 4px; }
+
+/* --- NAV ICONS (inline SVG statt Emoji) --- */
+.nav-icon { display: inline-flex; align-items: center; justify-content: center; }
+.nav-icon svg { width: 18px; height: 18px; flex-shrink: 0; }
+
+/* --- INLINE ICONS (SVG statt Emoji, ueberall im Webif) --- */
+.ico, .nav-icon svg, #theme-toggle svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ico { width: 15px; height: 15px; vertical-align: -2px; margin-right: 5px; display: inline-block; flex-shrink: 0; }
+.ico-lg { width: 22px; height: 22px; vertical-align: -5px; margin-right: 0; }
+.ico-xl { width: 30px; height: 30px; vertical-align: middle; margin-right: 0; }
+.icon-btn .ico { margin-right: 0; width: 16px; height: 16px; vertical-align: middle; }

@@ -465,10 +465,15 @@ void processRelayTestJobs() {
       }
     } else {
       if (now - allRelaysTest.phaseStartTime >= 100) {
-        allRelaysTest.currentSlot++;
+        int next = allRelaysTest.currentSlot + 1;
+        while (next < activeSlots && allRelaysTest.emptyOnly &&
+               (slotAvailable[next] || slotLocked[next])) {
+          next++; // Volle/gesperrte Faecher bei "nur leere" ueberspringen
+        }
+        allRelaysTest.currentSlot = next;
         if (allRelaysTest.currentSlot >= activeSlots) {
           allRelaysTest.active = false;
-          logMessage("Web: Relais-Sequenztest abgeschlossen.");
+          logMessage("Web: Relais-Sequenz abgeschlossen.");
         } else {
           controlSlotRelay(allRelaysTest.currentSlot, true);
           allRelaysTest.relayOn = true;
@@ -479,9 +484,7 @@ void processRelayTestJobs() {
   }
 }
 
-/**
- * @brief Serves the dashboard JavaScript from LittleFS (/app.js).
- */
+/** @brief Liefert das Dashboard-JavaScript aus LittleFS (/app.js). */
 void handleAppJs() {
   if (!LittleFS.exists("/app.js")) {
     server.send(404, "text/plain", "app.js not found on LittleFS");
@@ -526,7 +529,8 @@ void handleApiStatus() {
     if (i > 0) slotsJson += ",";
     slotsJson += "{\"price\":\"" + centsToEurStr(slotPriceCents[i]) + "\","
                + "\"available\":" + (slotAvailable[i] ? "true" : "false") + ","
-               + "\"locked\":" + (slotLocked[i] ? "true" : "false") + "}";
+               + "\"locked\":" + (slotLocked[i] ? "true" : "false") + ","
+               + "\"pickup\":" + (slotIsPickup[i] ? "true" : "false") + "}";
   }
   slotsJson += "]";
 
@@ -593,6 +597,16 @@ void handleApiConfig() {
   json += "\"disp_timeout\":"       + String(DISPLAY_TIMEOUT)                   + ",";
   json += "\"web_timeout\":"        + String(WEB_TIMEOUT / 1000UL)              + ",";
   json += "\"status_enabled\":"     + jBool(statusEnabled)                      + ",";
+  json += "\"autocredit_enabled\":" + jBool(autoCreditResetEnabled)             + ",";
+  {
+    char acrTimeBuf[6];
+    snprintf(acrTimeBuf, sizeof(acrTimeBuf), "%02d:%02d", autoCreditResetHour, autoCreditResetMinute);
+    json += "\"autocredit_time\":"  + jStr(String(acrTimeBuf))                  + ",";
+  }
+  json += "\"idle_credit_reset_enabled\":" + jBool(idleCreditResetEnabled)       + ",";
+  json += "\"idle_credit_reset_min\":"     + String(idleCreditResetMinutes)      + ",";
+  json += "\"max_credit\":"                + centsToEurStr(maxCreditCents)      + ",";
+  json += "\"max_topup\":"                 + centsToEurStr(maxTopUpCents)       + ",";
 
   // --- Telegram ---
   json += "\"tg_enabled\":"              + jBool(telegramEnabled)           + ",";
@@ -604,6 +618,8 @@ void handleApiConfig() {
   json += "\"notify_empty\":"           + jBool(telegramNotifyEmpty)        + ",";
   json += "\"notify_crash\":"           + jBool(telegramNotifyCrash)        + ",";
   json += "\"notify_bruteforce\":"      + jBool(telegramNotifyBruteForce)   + ",";
+  json += "\"notify_credit_threshold\":" + jBool(telegramNotifyCreditThreshold) + ",";
+  json += "\"credit_warn_threshold\":"   + centsToEurStr(creditWarnThresholdCents) + ",";
 
   // --- Display ---
   json += "\"slogan\":"              + jStr(displaySlogan)    + ",";
@@ -629,7 +645,7 @@ void handleApiConfig() {
   json += "\"subnet\":"    + jStr(sn)  + ",";
   json += "\"dns1\":"      + jStr(d1)  + ",";
 
-  // --- Zahlungs-Pulse (denomination-centric) ---
+  // --- Zahlungs-Pulse (je Nennwert) ---
   json += "\"coinEnabled\":" + jBool(coinAcceptorEnabled) + ",";
   json += "\"billEnabled\":" + jBool(billAcceptorEnabled) + ",";
   const int  cDenoms[] = {1,2,5,10,20,50,100,200};
@@ -654,19 +670,31 @@ void handleApiConfig() {
     if (i > 0) json += ",";
     json += String(slotPriceCents[i]);
   }
+  json += "],";
+  json += "\"slotPickup\":[";
+  for (int i = 0; i < activeSlots; i++) {
+    if (i > 0) json += ",";
+    json += jBool(slotIsPickup[i]);
+  }
+  json += "],";
+  json += "\"slotPin\":[";
+  for (int i = 0; i < activeSlots; i++) {
+    if (i > 0) json += ",";
+    json += jStr(slotPinCode[i]);
+  }
   json += "]";  // kein Komma – letztes Feld
 
   json += "}";
   server.send(200, "application/json", json);
 }
 
-/**
- * @brief Sets up all web server endpoints (routes).
- */
-void handleResetCashBox();  // forward declaration
+/** @brief Richtet alle Webserver-Endpunkte (Routen) ein. */
+void handleResetCashBox();  // Vorwärtsdeklaration
 void handlePaymentConfig();
 void handleSavePaymentConfig();
 void handleOTAFileUploadFs();
+void handleOpenEmptySlotsWeb();
+void handleEventLogDataRequest();
 void setupWebServer() {
   // Cookie-Header einlesen (nötig für Session-Token-Prüfung)
   const char* headerKeys[] = { "Cookie" };
@@ -691,10 +719,12 @@ void setupWebServer() {
   server.on("/refillall", HTTP_POST, handleRefillAllWeb);
   server.on("/triggerrelay", HTTP_POST, handleTriggerRelayWeb);
   server.on("/triggerallrelays", HTTP_POST, handleTriggerAllRelaysWeb);
+  server.on("/openemptyslots", HTTP_POST, handleOpenEmptySlotsWeb);
   server.on("/setstaticip", HTTP_POST, handleSetStaticIPWeb);
   server.on("/updateslots", HTTP_POST, handleUpdateSlotsWeb);
   server.on("/toggleslotlock", HTTP_POST, handleToggleSlotLockWeb);
   server.on("/logdata", HTTP_GET, handleLogDataRequest);
+  server.on("/eventlogdata", HTTP_GET, handleEventLogDataRequest);
   server.on("/saleslog", HTTP_GET, handleSalesLog);
   server.on("/otaupdate", HTTP_GET, handleOTAUpdatePage);
   server.on("/timingconfig", HTTP_GET, handleTimingConfigPage);
@@ -725,7 +755,7 @@ void setupWebServer() {
     server.send(302, "text/plain", "");
   }, handleOTAFileUploadFs);
 
-  // 404 Not Found Handler
+  // 404-Handler (Seite nicht gefunden)
   server.onNotFound([]() {
     server.send(404, "text/plain", "Page not found.");
     logf("HTTP 404: %s", server.uri().c_str());
@@ -738,7 +768,7 @@ server.on("/savesumup", HTTP_POST, []() {
   sumupReaderId = server.arg("readerId");
   sumupEnabled = server.hasArg("enabled");
   
-  // Timeout from seconds to milliseconds
+  // Timeout von Sekunden in Millisekunden umrechnen
   int timeoutSec = server.arg("timeout").toInt();
   if (timeoutSec < 10) timeoutSec = 10;
   sumupTimeout = (unsigned long)timeoutSec * 1000;
@@ -767,10 +797,10 @@ server.on("/pairsumup", HTTP_POST, []() {
     preferences.begin("hanimat", false);
     preferences.putString("suRid", newId);
     preferences.end();
-    logf("Web: SumUp Pairing erfolgreich. Reader ID: %s", newId.c_str());
+    logEventf("Web: SumUp Pairing erfolgreich. Reader ID: %s", newId.c_str());
     server.send(200, "text/html", "Erfolg! ID: " + newId + " <meta http-equiv='refresh' content='2;url=/' />");
   } else {
-    logMessage("Web: SumUp Pairing fehlgeschlagen.");
+    logEvent("Web: SumUp Pairing fehlgeschlagen.");
     server.send(200, "text/html", "Fehler! Code prüfen. <meta http-equiv='refresh' content='2;url=/' />");
   }
 });
@@ -818,9 +848,7 @@ server.begin();
 //                      WEB SERVER HANDLERS
 // =================================================================
 
-/**
- * @brief Handles requests to the root URL ("/"). Shows login or dashboard.
- */
+/** @brief Verarbeitet Anfragen an die Root-URL ("/"): zeigt Login oder Dashboard. */
 void handleRoot() {
   lastActivityTimeWeb = millis();
   if (!isAuth()) {
@@ -830,16 +858,14 @@ void handleRoot() {
   }
 }
 
-/**
- * @brief Handles the login form submission.
- */
+/** @brief Verarbeitet die Login-Formular-Übermittlung. */
 void handleLogin() {
   lastActivityTimeWeb = millis();
 
   // --- Brute-Force: Sperre prüfen ---
   if (loginLockoutUntil > 0 && millis() < loginLockoutUntil) {
     unsigned long secsLeft = (loginLockoutUntil - millis()) / 1000;
-    logf("Web: Login gesperrt – noch %lu s.", secsLeft);
+    logEventf("Web: Login gesperrt – noch %lu s.", secsLeft);
     server.send(429, "text/plain",
       "Zu viele Fehlversuche. Bitte " + String(secsLeft) + " Sekunden warten.");
     return;
@@ -850,18 +876,18 @@ void handleLogin() {
     loginFailCount    = 0;
     loginLockoutUntil = 0;
     activeSessionToken = generateSessionToken();
-    logf("Web: Login erfolgreich. Session: %s", activeSessionToken.c_str());
+    logEventf("Web: Login erfolgreich. Session: %s", activeSessionToken.c_str());
     server.sendHeader("Set-Cookie", "HANIMAT_SESSION=" + activeSessionToken + "; HttpOnly; Path=/");
     server.sendHeader("Location", "/", true);
     server.send(302, "text/plain", "");
   } else {
     loginFailCount++;
-    logf("Web: Login fehlgeschlagen (%d/%d).", loginFailCount, LOGIN_MAX_FAILS);
+    logEventf("Web: Login fehlgeschlagen (%d/%d).", loginFailCount, LOGIN_MAX_FAILS);
 
     if (loginFailCount >= LOGIN_MAX_FAILS) {
       loginLockoutUntil = millis() + LOGIN_LOCKOUT_MS;
       loginFailCount    = 0; // Zurücksetzen – nach Ablauf der Sperre neu zählen
-      logMessage("Web: Brute-Force erkannt! IP gesperrt für 5 Minuten.");
+      logEvent("Web: Brute-Force erkannt! IP gesperrt für 5 Minuten.");
       if (telegramNotifyBruteForce) {
         sendTelegramMessage(
           "🚨 HANIMAT Sicherheitswarnung!\n"
@@ -955,7 +981,7 @@ void handlePaymentConfig() {
 }
 void handleSavePaymentConfig() {
   if (!isAuth()) { server.send(401, "text/plain", "Not authorized."); return; }
-  // Denomination-centric coin mapping: coin_1, coin_2, coin_5, ..., coin_200
+  // Münz-Mapping je Nennwert: coin_1, coin_2, coin_5, ..., coin_200
   const int  sCoinDenoms[]  = {1, 2, 5, 10, 20, 50, 100, 200};
   const char* sCoinFields[] = {"coin_1","coin_2","coin_5","coin_10","coin_20","coin_50","coin_100","coin_200"};
   memset(pulseValues, 0, sizeof(pulseValues));
@@ -967,7 +993,7 @@ void handleSavePaymentConfig() {
       }
     }
   }
-  // Denomination-centric bill mapping: bill_5, bill_10, bill_20, bill_50, bill_100
+  // Schein-Mapping je Nennwert: bill_5, bill_10, bill_20, bill_50, bill_100
   const int billDenoms[]    = {5, 10, 20, 50, 100};
   const char* billFlds[]    = {"bill_5", "bill_10", "bill_20", "bill_50", "bill_100"};
   memset(billValues, 0, sizeof(billValues)); // alle löschen, dann neu setzen
@@ -1016,9 +1042,7 @@ void handleSetWifi() {
   ESP.restart();
 }
 
-/**
- * @brief Handles the change password form submission.
- */
+/** @brief Verarbeitet die Passwort-Ändern-Formular-Übermittlung. */
 void handleChangePasswordWeb() {
   lastActivityTimeWeb = millis();
   if (!isAuth()) { server.send(401, "text/plain", "Not authorized."); return; }
@@ -1029,7 +1053,7 @@ void handleChangePasswordWeb() {
         preferences.begin("hanimat", false);
         preferences.putString("password", savedPassword);
         preferences.end();
-        logMessage("Web: Admin password changed.");
+        logEvent("Web: Admin password changed.");
         server.send(200, "text/html", "Passwort geändert. <meta http-equiv='refresh' content='2;url=/' />");
     } else {
         server.send(400, "text/html", "Passwort zu kurz (min. 4 Zeichen). <meta http-equiv='refresh' content='2;url=/' />");
@@ -1038,7 +1062,7 @@ void handleChangePasswordWeb() {
 }
 
 /**
- * @brief Handles bulk update of all slot prices in one form submit.
+ * @brief Aktualisiert alle Fachpreise in einer Formular-Übermittlung.
  *        Erwartet Parameter price_0 … price_N (als EUR-Float-String, z.B. "5.10").
  */
 void handleUpdatePriceWeb() {
@@ -1046,48 +1070,92 @@ void handleUpdatePriceWeb() {
   if (!isAuth()) { server.send(401, "text/plain", "Not authorized."); return; }
 
   int changed = 0;
-  char argName[12], nvKey[12];
+  char argName[16], nvKey[16];
 
   preferences.begin("hanimat", false);
   for (int i = 0; i < activeSlots; i++) {
     snprintf(argName, sizeof(argName), "price_%d", i);
-    if (!server.hasArg(argName)) continue;
+    if (server.hasArg(argName)) {
+      int priceCents = (int)roundf(server.arg(argName).toFloat() * 100.0f);
+      if (priceCents < 0) priceCents = 0;
 
-    int priceCents = (int)roundf(server.arg(argName).toFloat() * 100.0f);
-    if (priceCents < 0) priceCents = 0;
+      if (slotPriceCents[i] != priceCents) {
+        slotPriceCents[i] = priceCents;
+        snprintf(nvKey, sizeof(nvKey), "priceC%d", i);
+        preferences.putInt(nvKey, priceCents);
+        // Nur RAM-Log statt logEventf: bei "Alle uebernehmen" waeren das bis zu 128 Flash-Schreibzyklen in einem Request.
+        logf("Web: Preis Fach %d -> %s EUR", i + 1, centsToEurStr(priceCents).c_str());
+        changed++;
+      }
+    }
 
-    if (slotPriceCents[i] != priceCents) {
-      slotPriceCents[i] = priceCents;
-      snprintf(nvKey, sizeof(nvKey), "priceC%d", i);
-      preferences.putInt(nvKey, priceCents);
-      logf("Web: Preis Fach %d → %s EUR", i + 1, centsToEurStr(priceCents).c_str());
+    // --- Abholfach-Konfiguration ---
+    snprintf(argName, sizeof(argName), "pickup_%d", i);
+    bool newIsPickup = server.hasArg(argName); // Checkbox: nur vorhanden wenn angehakt
+
+    if (newIsPickup != slotIsPickup[i]) {
+      slotIsPickup[i] = newIsPickup;
+      snprintf(nvKey, sizeof(nvKey), "pickup%d", i);
+      preferences.putBool(nvKey, newIsPickup);
+      if (!newIsPickup && strlen(slotPinCode[i]) > 0) {
+        // Beim Deaktivieren: verwaisten Code entfernen
+        slotPinCode[i][0] = '\0';
+        snprintf(nvKey, sizeof(nvKey), "pin%d", i);
+        preferences.putString(nvKey, "");
+      }
+      logf("Web: Fach %d Abholfach-Modus: %s", i + 1, newIsPickup ? "an" : "aus");
       changed++;
+    }
+
+    snprintf(argName, sizeof(argName), "code_%d", i);
+    if (newIsPickup && server.hasArg(argName)) {
+      String newCode = server.arg(argName);
+      bool validCode = (newCode.length() == 4);
+      for (size_t c = 0; validCode && c < newCode.length(); c++) {
+        if (!isdigit(newCode[c])) validCode = false;
+      }
+      if (validCode && newCode != slotPinCode[i]) {
+        newCode.toCharArray(slotPinCode[i], sizeof(slotPinCode[i]));
+        snprintf(nvKey, sizeof(nvKey), "pin%d", i);
+        preferences.putString(nvKey, newCode);
+        slotAvailable[i] = true; // neuer Code = frisch befuellt
+        snprintf(nvKey, sizeof(nvKey), "avail%d", i);
+        preferences.putBool(nvKey, true);
+        logf("Web: Neuer Abhol-Code fuer Fach %d gesetzt, Fach wieder verfuegbar.", i + 1);
+        changed++;
+      }
     }
   }
   preferences.end();
 
-  logf("Web: Preise gespeichert (%d geändert).", changed);
+  if (changed > 0) {
+    logEventf("Web: Slot-Konfiguration gespeichert (%d Aenderungen).", changed);
+  } else {
+    logMessage("Web: Slot-Konfiguration gespeichert (keine Aenderungen).");
+  }
   displayNeedsUpdate = true;
   server.sendHeader("Location", "/#slots-config", true);
   server.send(302, "text/plain", "");
 }
 
-/**
- * @brief Handles refilling a single slot.
- */
+/** @brief Füllt ein einzelnes Fach wieder auf. */
 void handleRefillWeb() {
   lastActivityTimeWeb = millis();
   if (!isAuth()) { server.send(401, "text/plain", "Not authorized."); return; }
   if (server.hasArg("slot")) {
     int slot = server.arg("slot").toInt();
     if (slot >= 0 && slot < activeSlots) {
-      if (!slotLocked[slot]) {
+      if (isPickupSlotEmpty(slot)) {
+          // Abholfach ohne Code: "verfuegbar" waere inkonsistent (Keypad/Display
+          // melden weiterhin "leer") und wuerde Bestandswarnungen unterdruecken.
+          server.send(400, "text/html", String("Fach ") + (slot+1) + " ist ein Abholfach - bitte in der Slot-Konfiguration einen neuen Code setzen. <meta http-equiv='refresh' content='3;url=/' />");
+      } else if (!slotLocked[slot]) {
           slotAvailable[slot] = true;
           char nvKey[12]; snprintf(nvKey, sizeof(nvKey), "avail%d", slot);
           preferences.begin("hanimat", false);
           preferences.putBool(nvKey, true);
           preferences.end();
-          logf("Web: Slot %d refilled.", slot + 1);
+          logEventf("Web: Slot %d refilled.", slot + 1);
           checkOverallStockLevel();
           server.send(200, "text/html", "Fach aufgefuellt. <meta http-equiv='refresh' content='1;url=/' />");
           displayNeedsUpdate = true;
@@ -1097,45 +1165,53 @@ void handleRefillWeb() {
 }
 
 /**
- * @brief Handles manually adding or removing credit.
+ * @brief Fügt manuell Guthaben hinzu oder entfernt es (z.B. um einem Kunden Guthaben aufzuladen).
+ *        Max. 50 EUR pro Vorgang; das generelle 100-EUR-Sicherheitsnetz (enforceCreditCap) gilt zusaetzlich.
  */
 void handleAddCreditWeb() {
   lastActivityTimeWeb = millis();
   if (!isAuth()) { server.send(401, "text/plain", "Not authorized."); return; }
   if (server.hasArg("amount")) {
-    int amountCents = (int)roundf(server.arg("amount").toFloat() * 100.0f);
-    if (amountCents != 0) {
-        creditCents += amountCents;
-        saveCreditToNVS(true);
-        logf("Web: Credit adjusted by %s EUR. New credit: %s EUR.", centsToEurStr(amountCents).c_str(), centsToEurStr(creditCents).c_str());
-        server.send(200, "text/html", "Guthaben angepasst. <meta http-equiv='refresh' content='1;url=/' />");
-        displayNeedsUpdate = true;
-    } else { server.send(400, "text/plain", "Amount is 0."); }
+    float amountEur = server.arg("amount").toFloat();
+    // Bereich VOR dem float->int-Cast pruefen: extreme Werte (z.B. 999999999999)
+    // waeren im Cast undefiniertes Verhalten und koennten die abs()-Pruefung umgehen.
+    if (isnan(amountEur) || amountEur < -1000.0f || amountEur > 1000.0f) {
+        server.send(400, "text/html", "Ungueltiger Betrag. <meta http-equiv='refresh' content='2;url=/' />");
+        return;
+    }
+    int amountCents = (int)roundf(amountEur * 100.0f);
+    if (amountCents == 0) { server.send(400, "text/plain", "Amount is 0."); return; }
+    if (abs(amountCents) > maxTopUpCents) {
+        server.send(400, "text/html", "Maximal " + centsToEurStr(maxTopUpCents) + " Euro pro Vorgang erlaubt. <meta http-equiv='refresh' content='2;url=/' />");
+        return;
+    }
+    addCredit(amountCents);
+    saveCreditToNVS(true);
+    logEventf("Web: Credit adjusted by %s EUR. New credit: %s EUR.", centsToEurStr(amountCents).c_str(), centsToEurStr(creditCents).c_str());
+    server.send(200, "text/html", "Guthaben angepasst. <meta http-equiv='refresh' content='1;url=/' />");
   } else { server.send(400, "text/plain", "Amount missing."); }
 }
 
-/**
- * @brief Handles resetting the credit to zero.
- */
+/** @brief Setzt das Guthaben auf null zurück. */
 void handleResetCreditWeb() {
   lastActivityTimeWeb = millis();
   if (!isAuth()) { server.send(401, "text/plain", "Not authorized."); return; }
-  creditCents = 0;
-  saveCreditToNVS(true);
-  logMessage("Web: Credit reset to 0.");
+  resetCredit("Web-Interface");
   server.send(200, "text/html", "Guthaben zurueckgesetzt. <meta http-equiv='refresh' content='1;url=/' />");
-  displayNeedsUpdate = true;
 }
 
-/**
- * @brief Handles refilling all available (and not locked) slots.
- */
+/** @brief Füllt alle verfügbaren (unverriegelten) Fächer wieder auf. */
 void handleRefillAllWeb() {
   lastActivityTimeWeb = millis();
   if (!isAuth()) { server.send(401, "text/plain", "Not authorized."); return; }
   char nvKey[12];
+  int skippedPickups = 0;
   preferences.begin("hanimat", false);
   for (int i = 0; i < activeSlots; i++) {
+    if (isPickupSlotEmpty(i)) {
+        skippedPickups++; // Abholfach ohne Code: braucht neuen Code statt "Auffuellen"
+        continue;
+    }
     if (!slotLocked[i]) {
         slotAvailable[i] = true;
         snprintf(nvKey, sizeof(nvKey), "avail%d", i);
@@ -1143,15 +1219,17 @@ void handleRefillAllWeb() {
     }
   }
   preferences.end();
-  logMessage("Web: All unlocked slots have been refilled.");
+  if (skippedPickups > 0) {
+    logEventf("Web: Alle Faecher aufgefuellt (%d Abholfaecher ohne Code uebersprungen).", skippedPickups);
+  } else {
+    logEvent("Web: All unlocked slots have been refilled.");
+  }
   checkOverallStockLevel();
   server.send(200, "text/html", "Alle Faecher aufgefuellt. <meta http-equiv='refresh' content='1;url=/' />");
   displayNeedsUpdate = true;
 }
 
-/**
- * @brief Triggers a single relay for testing purposes.
- */
+/** @brief Löst ein einzelnes Relais zu Testzwecken aus. */
 void handleTriggerRelayWeb() {
   lastActivityTimeWeb = millis();
   if (!isAuth()) { server.send(401, "text/plain", "Not authorized."); return; }
@@ -1161,7 +1239,7 @@ void handleTriggerRelayWeb() {
     int slot = server.arg("slot").toInt();
     if (slot >= 0 && slot < activeSlots) {
       logf("Web: Testing relay for slot %d", slot + 1);
-      // Non-blocking: Relais einschalten, processRelayTestJobs() schaltet nach 1s ab
+      // Nicht blockierend: Relais einschalten, processRelayTestJobs() schaltet nach 1s ab
       controlSlotRelay(slot, true);
       singleRelayTest = { true, slot, millis() };
       server.send(200, "text/html", String("Relais Fach ") + (slot+1) + " ausgeloest. <meta http-equiv='refresh' content='1;url=/' />");
@@ -1170,23 +1248,45 @@ void handleTriggerRelayWeb() {
 }
 
 /**
- * @brief Triggers all relays in sequence for testing.
+ * @brief Oeffnet nacheinander alle Faecher (Relais-Sequenz, z.B. zur Wartung).
  */
 void handleTriggerAllRelaysWeb() {
   lastActivityTimeWeb = millis();
   if (!isAuth()) { server.send(401, "text/plain", "Not authorized."); return; }
   // Schutz: Kein Test während eine echte Ausgabe läuft
   if (dispenseJob.active) { server.send(409, "text/plain", "Ausgabe laeuft gerade – bitte warten."); return; }
-  logMessage("Web: Starte Relais-Sequenztest...");
-  // Non-blocking: processRelayTestJobs() übernimmt die Sequenz
+  logMessage("Web: Starte Relais-Sequenz (alle Faecher)...");
+  // Nicht blockierend: processRelayTestJobs() übernimmt die Sequenz
   controlSlotRelay(0, true);
-  allRelaysTest = { true, 0, millis(), true };
-  server.send(200, "text/html", "Relais-Test gestartet (laeuft im Hintergrund). <meta http-equiv='refresh' content='1;url=/' />");
+  allRelaysTest = { true, 0, millis(), true, false };
+  server.send(200, "text/html", "Alle Faecher werden geoeffnet (laeuft im Hintergrund). <meta http-equiv='refresh' content='1;url=/' />");
 }
 
 /**
- * @brief Sets static IP configuration and reboots.
+ * @brief Oeffnet nacheinander nur die leeren, unverriegelten Faecher
+ *        (z.B. zum gezielten Nachfuellen, ohne bereits volle Faecher zu oeffnen).
  */
+void handleOpenEmptySlotsWeb() {
+  lastActivityTimeWeb = millis();
+  if (!isAuth()) { server.send(401, "text/plain", "Not authorized."); return; }
+  if (dispenseJob.active) { server.send(409, "text/plain", "Ausgabe laeuft gerade – bitte warten."); return; }
+
+  int firstEmpty = -1;
+  for (int i = 0; i < activeSlots; i++) {
+    if (!slotAvailable[i] && !slotLocked[i]) { firstEmpty = i; break; }
+  }
+  if (firstEmpty == -1) {
+    server.send(200, "text/html", "Keine leeren Faecher vorhanden. <meta http-equiv='refresh' content='1;url=/' />");
+    return;
+  }
+
+  logMessage("Web: Starte Relais-Sequenz (nur leere Faecher)...");
+  controlSlotRelay(firstEmpty, true);
+  allRelaysTest = { true, firstEmpty, millis(), true, true };
+  server.send(200, "text/html", "Leere Faecher werden geoeffnet (laeuft im Hintergrund). <meta http-equiv='refresh' content='1;url=/' />");
+}
+
+/** @brief Setzt die statische IP-Konfiguration und startet neu. */
 void handleSetStaticIPWeb() {
   lastActivityTimeWeb = millis();
   if (!isAuth()) { server.send(401, "text/plain", "Not authorized."); return; }
@@ -1230,20 +1330,19 @@ void handleSetStaticIPWeb() {
   ESP.restart();
 }
 
-/**
- * @brief Updates the total number of active slots.
- */
+/** @brief Aktualisiert die Gesamtanzahl der aktiven Fächer. */
 void handleUpdateSlotsWeb() {
   lastActivityTimeWeb = millis();
   if (!isAuth()) { server.send(401, "text/plain", "Not authorized."); return; }
   if (server.hasArg("maxSlots")) {
     int newNumSlots = server.arg("maxSlots").toInt();
     if (newNumSlots > 0 && newNumSlots <= MAX_SLOTS) {
+      int oldNumSlots = activeSlots;
       activeSlots = newNumSlots;
       char nvKey[12];
       preferences.begin("hanimat", false);
       preferences.putInt("activeSlots", activeSlots);
-      // Initialize new slots if they don't exist in preferences
+      // Neue Fächer initialisieren, falls in Preferences noch nicht vorhanden
       for(int i = 0; i < activeSlots; i++) {
           snprintf(nvKey, sizeof(nvKey), "avail%d", i);
           if(!preferences.isKey(nvKey)) {
@@ -1252,10 +1351,32 @@ void handleUpdateSlotsWeb() {
           }
           snprintf(nvKey, sizeof(nvKey), "priceC%d", i);
           if(!preferences.isKey(nvKey)) {
-              slotPriceCents[i] = 500; // Default 5,00 EUR
+              slotPriceCents[i] = 500; // Standardwert 5,00 EUR
               preferences.putInt(nvKey, 500);
           }
       }
+
+      // Abholfach-Arrays sind heap-allokiert auf Groesse oldNumSlots; beim Vergroessern muessen sie neu allokiert werden (sonst Pufferueberlauf).
+      if (activeSlots > oldNumSlots) {
+        bool  *newPickup  = new bool[activeSlots]();
+        char (*newPin)[7] = new char[activeSlots][7]();
+        for (int i = 0; i < oldNumSlots; i++) {
+          newPickup[i] = slotIsPickup[i];
+          memcpy(newPin[i], slotPinCode[i], sizeof(newPin[i]));
+        }
+        for (int i = oldNumSlots; i < activeSlots; i++) {
+          snprintf(nvKey, sizeof(nvKey), "pickup%d", i);
+          newPickup[i] = preferences.getBool(nvKey, false);
+          snprintf(nvKey, sizeof(nvKey), "pin%d", i);
+          preferences.getString(nvKey, newPin[i], sizeof(newPin[i]));
+        }
+        delete[] slotIsPickup;
+        delete[] slotPinCode;
+        slotIsPickup = newPickup;
+        slotPinCode  = newPin;
+        logf("Web: Abholfach-Arrays vergroessert von %d auf %d Faecher.", oldNumSlots, activeSlots);
+      }
+
       preferences.end();
       logf("Web: Number of active slots set to %d", activeSlots);
       server.send(200, "text/html", "Anzahl Faecher aktualisiert. Neustart empfohlen. <meta http-equiv='refresh' content='2;url=/' />");
@@ -1264,9 +1385,7 @@ void handleUpdateSlotsWeb() {
   } else { server.send(400, "text/plain", "Missing parameters."); }
 }
 
-/**
- * @brief Toggles the locked state of a slot.
- */
+/** @brief Schaltet den Sperrzustand eines Fachs um. */
 void handleToggleSlotLockWeb() {
   lastActivityTimeWeb = millis();
   if (!isAuth()) { server.send(401, "text/plain", "Not authorized."); return; }
@@ -1278,16 +1397,14 @@ void handleToggleSlotLockWeb() {
       preferences.begin("hanimat", false);
       preferences.putBool(nvKey, slotLocked[slot]);
       preferences.end();
-      logf("Web: Slot %d %s", slot + 1, slotLocked[slot] ? "locked." : "unlocked.");
+      logEventf("Web: Slot %d %s", slot + 1, slotLocked[slot] ? "locked." : "unlocked.");
       server.send(200, "text/html", "Fachstatus geaendert. <meta http-equiv='refresh' content='1;url=/' />");
       displayNeedsUpdate = true;
     } else { server.send(400, "text/plain", "Invalid slot."); }
   } else { server.send(400, "text/plain", "Missing parameters."); }
 }
 
-/**
- * @brief Provides log data as plain text for the web UI.
- */
+/** @brief Liefert Log-Daten als Klartext für die Web-Oberfläche. */
 void handleLogDataRequest() {
   lastActivityTimeWeb = millis();
   if (!isAuth()) {
@@ -1305,6 +1422,30 @@ void handleLogDataRequest() {
     }
   }
   server.send(200, "text/plain", logContent);
+}
+
+/**
+ * @brief Liefert das persistente Ereignis-Log (Zahlungen, Preisaenderungen,
+ *        Fehler, Admin-Aktionen — ca. 3 Tage zurueckverfolgbar) als Text.
+ */
+void handleEventLogDataRequest() {
+  lastActivityTimeWeb = millis();
+  if (!isAuth()) {
+    server.send(401, "text/plain", "Not authorized.");
+    return;
+  }
+
+  String content = "";
+  if (LittleFS.exists(EVENT_LOG_FILE_OLD)) {
+    File fOld = LittleFS.open(EVENT_LOG_FILE_OLD, "r");
+    if (fOld) { content += fOld.readString(); fOld.close(); }
+  }
+  if (LittleFS.exists(EVENT_LOG_FILE)) {
+    File fCur = LittleFS.open(EVENT_LOG_FILE, "r");
+    if (fCur) { content += fCur.readString(); fCur.close(); }
+  }
+  if (content.length() == 0) content = "Noch keine Ereignisse aufgezeichnet.";
+  server.send(200, "text/plain", content);
 }
 
 /**
@@ -1333,7 +1474,10 @@ void handleSalesLog() {
     json += ",\"price\":\"";
     json += centsToEurStr(e.priceCents);
     json += "\",\"method\":\"";
-    json += (e.method == PaymentMethod::SUMUP) ? "SUMUP" : "CASH";
+    if      (e.method == PaymentMethod::SUMUP)  json += "SUMUP";
+    else if (e.method == PaymentMethod::PICKUP) json += "PICKUP";
+    else if (e.method == PaymentMethod::MIXED)  json += "MIXED";
+    else                                        json += "CASH";
     json += "\"}";
   }
   json += "]";
@@ -1343,9 +1487,7 @@ void handleSalesLog() {
 
 // --- OTA Update Handlers ---
 
-/**
- * @brief Displays the OTA update page.
- */
+/** @brief Zeigt die OTA-Update-Seite an. */
 void handleOTAUpdatePage() {
   if (!isAuth()) {
     server.sendHeader("Location", "/login", true);
@@ -1353,14 +1495,12 @@ void handleOTAUpdatePage() {
     return;
   }
   lastActivityTimeWeb = millis();
-  // The actual HTML is generated by showDashboard() JS, this just redirects.
+  // Das eigentliche HTML wird per showDashboard()-JS erzeugt, hier wird nur weitergeleitet.
   server.sendHeader("Location", "/#ota-update-section", true);
   server.send(302, "text/plain", "");
 }
 
-/**
- * @brief Handles the binary file upload for OTA updates.
- */
+/** @brief Verarbeitet den binären Datei-Upload für OTA-Updates. */
 void handleOTAFileUpload() {
   if (!isAuth()) { return; }
   lastActivityTimeWeb = millis();
@@ -1512,9 +1652,7 @@ void handleOTAFileUploadFs() {
   }
 }
 
-/**
- * @brief Handles timing configuration form submission.
- */
+/** @brief Verarbeitet die Zeiteinstellungen-Formular-Übermittlung. */
 void handleSaveTimingConfig() {
     if (!isAuth()) { server.send(401, "text/plain", "Not authorized."); return; }
     lastActivityTimeWeb = millis();
@@ -1532,6 +1670,27 @@ void handleSaveTimingConfig() {
     WEB_TIMEOUT = webToutSec * 1000UL;
     statusEnabled = server.hasArg("status_enabled");
 
+    autoCreditResetEnabled = server.hasArg("autocredit_enabled");
+    String acrTime = server.arg("autocredit_time"); // Format "HH:MM" (aus <input type='time'>)
+    int colonPos = acrTime.indexOf(':');
+    if (colonPos > 0) {
+      int h = acrTime.substring(0, colonPos).toInt();
+      int m = acrTime.substring(colonPos + 1).toInt();
+      if (h >= 0 && h <= 23 && m >= 0 && m <= 59) {
+        autoCreditResetHour   = h;
+        autoCreditResetMinute = m;
+      }
+    }
+
+    idleCreditResetEnabled = server.hasArg("idle_credit_reset_enabled");
+    int idleMin = server.arg("idle_credit_reset_min").toInt();
+    if (idleMin >= 1 && idleMin <= 120) idleCreditResetMinutes = idleMin;
+
+    float maxCreditEur = server.arg("max_credit").toFloat();
+    if (maxCreditEur >= 1 && maxCreditEur <= 1000) maxCreditCents = (int)roundf(maxCreditEur * 100.0f);
+    float maxTopUpEur = server.arg("max_topup").toFloat();
+    if (maxTopUpEur >= 1 && maxTopUpEur <= 1000) maxTopUpCents = (int)roundf(maxTopUpEur * 100.0f);
+
     preferences.putULong("coinDelay",      COIN_PROCESSING_DELAY);
     preferences.putULong("billIsrDeb",     BILL_ISR_DEBOUNCE_MS);
     preferences.putULong("billGrpTout",    BILL_GROUP_PROCESSING_TIMEOUT_MS);
@@ -1541,17 +1700,29 @@ void handleSaveTimingConfig() {
     preferences.putULong("dispTimeout",    DISPLAY_TIMEOUT);
     preferences.putULong("webTout",        WEB_TIMEOUT);
     preferences.putBool("statusEnabled",   statusEnabled);
+    preferences.putBool("acrEnabled",      autoCreditResetEnabled);
+    preferences.putInt("acrHour",          autoCreditResetHour);
+    preferences.putInt("acrMinute",        autoCreditResetMinute);
+    preferences.putBool("idleCrEn",        idleCreditResetEnabled);
+    preferences.putInt("idleCrMin",        idleCreditResetMinutes);
+    preferences.putInt("maxCreditCts",     maxCreditCents);
+    preferences.putInt("maxTopUpCts",      maxTopUpCents);
     preferences.end();
 
+    logEventf("Web: Guthaben-Obergrenze %s EUR, max. Aufladung %s EUR.",
+              centsToEurStr(maxCreditCents).c_str(), centsToEurStr(maxTopUpCents).c_str());
+    logEventf("Web: Automatischer Guthaben-Reset %s (Uhrzeit %02d:%02d).",
+              autoCreditResetEnabled ? "aktiviert" : "deaktiviert",
+              autoCreditResetHour, autoCreditResetMinute);
+    logEventf("Web: Idle-Guthaben-Reset %s (%d Minuten).",
+              idleCreditResetEnabled ? "aktiviert" : "deaktiviert", idleCreditResetMinutes);
     logMessage("Web: Zeiteinstellungen gespeichert und sofort übernommen.");
     otaStatusMessage = "Zeiteinstellungen gespeichert! Neustart empfohlen.";
     server.sendHeader("Location", "/#timing-config", true);
     server.send(302, "text/plain", "");
 }
 
-/**
- * @brief Handles Telegram and stock notification form submission.
- */
+/** @brief Verarbeitet die Formular-Übermittlung für Telegram- und Bestandsbenachrichtigungen. */
 void handleSaveTelegramConfig() {
     if (!isAuth()) { server.send(401, "text/plain", "Not authorized."); return; }
     lastActivityTimeWeb = millis();
@@ -1566,6 +1737,10 @@ void handleSaveTelegramConfig() {
     telegramNotifyBruteForce  = server.hasArg("notify_bruteforce");
     almostEmptyThreshold      = server.arg("almost_empty_threshold").toInt();
 
+    telegramNotifyCreditThreshold = server.hasArg("notify_credit_threshold");
+    float creditWarnEur = server.arg("credit_warn_threshold").toFloat();
+    if (creditWarnEur >= 0 && creditWarnEur <= 1000) creditWarnThresholdCents = (int)roundf(creditWarnEur * 100.0f);
+
     preferences.begin("hanimat", false);
     preferences.putBool("tgEnabled",      telegramEnabled);
     preferences.putString("tgToken",      telegramBotToken);
@@ -1576,7 +1751,13 @@ void handleSaveTelegramConfig() {
     preferences.putBool("tgNotifyEmpty",  telegramNotifyEmpty);
     preferences.putBool("tgNotifyCrash",  telegramNotifyCrash);
     preferences.putBool("tgNotifyBrute",  telegramNotifyBruteForce);
+    preferences.putBool("tgNotifyCredit", telegramNotifyCreditThreshold);
+    preferences.putInt("creditWarnCts",   creditWarnThresholdCents);
     preferences.end();
+
+    logEventf("Web: Guthaben-Telegram-Warnung %s (Schwelle %s EUR).",
+              telegramNotifyCreditThreshold ? "aktiviert" : "deaktiviert",
+              centsToEurStr(creditWarnThresholdCents).c_str());
 
     bot.updateToken(telegramBotToken);
 
@@ -1586,9 +1767,7 @@ void handleSaveTelegramConfig() {
     server.send(302, "text/plain", "");
 }
 
-/**
- * @brief Sends a test message to the configured Telegram chat.
- */
+/** @brief Sendet eine Testnachricht an den konfigurierten Telegram-Chat. */
 void handleSendTestTelegram() {
     if (!isAuth()) { server.send(401, "text/plain", "Not authorized."); return; }
     lastActivityTimeWeb = millis();
@@ -1642,7 +1821,7 @@ void handleSaveDisplayConfig() {
   server.send(302);
 }
 
-// Redirects for settings pages (content is loaded via JS)
+// Weiterleitungen für Einstellungsseiten (Inhalt wird per JS geladen)
 void handleTimingConfigPage() { server.sendHeader("Location", "/#timing-config", true); server.send(302); }
 void handleTelegramConfigPage() { server.sendHeader("Location", "/#telegram-config", true); server.send(302); }
 
@@ -1651,9 +1830,7 @@ void handleTelegramConfigPage() { server.sendHeader("Location", "/#telegram-conf
 //                      HTML PAGE GENERATORS
 // =================================================================
 
-/**
- * @brief Generates and sends the HTML for the login page.
- */
+/** @brief Erzeugt und sendet das HTML für die Login-Seite. */
 void showLoginPage() {
   String html = R"HTML(
 <!DOCTYPE html><html lang='de'><head><title>Login | HANIMAT</title>
@@ -1709,760 +1886,3 @@ void showDashboard() {
   server.streamFile(f, "text/html; charset=UTF-8");
   f.close();
 }
-
-// =================================================================
-//  LEGACY showDashboard() — vollständiger HTML-String (als Fallback / Referenz)
-//  Dieser Block wird nicht mehr aufgerufen; er bleibt für Referenzzwecke.
-//  Auskommentiert um Speicher zu sparen.
-// =================================================================
-#if 0
-void showDashboard_legacy() {
-  String html;
-  html.reserve(72000); // CSS extern (/style.css)
-  html = R"HTML(
-<!DOCTYPE html><html lang='de'><head><title>Hanimat Control</title>
-<meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no'>
-<script src='/app.js' defer></script>
-<link rel="stylesheet" href="/style.css">
-</head><body>
-
-<!-- Mobile UI -->
-<div class='overlay' data-action='toggle-menu'></div>
-<div class='mobile-header'>
-  <div class='logo' style='font-size:1.4rem'>HANI<span>MAT</span></div>
-  <button class='menu-toggle' data-action='toggle-menu'>&#9776;</button>
-</div>
-
-<!-- Sidebar -->
-<nav class='sidebar'>
-  <div class='brand-header'>
-    <div class='logo'>HANI<span>MAT</span></div>
-    <div class='logo-sub'>Thomas Schöpf</div>
-  </div>
-  <ul class='nav-list'>
-    <li><button class='nav-btn active' data-go='dashboard'><span class='nav-icon'>&#128202;</span> Dashboard</button></li>
-    <li><button class='nav-btn' data-go='slots-config'><span class='nav-icon'>&#9881;</span> Slot Config</button></li>
-    <li><button class='nav-btn' data-go='display-config'><span class='nav-icon'>&#128187;</span> Anzeige</button></li>
-    <li><button class='nav-btn' data-go='timing-config'><span class='nav-icon'>&#9201;</span> Zeitsteuerung</button></li>
-    <li><button class='nav-btn' data-go='telegram-config'><span class='nav-icon'>&#9993;</span> Telegram</button></li>
-    <li><button class='nav-btn' data-go='payment-config'><span class='nav-icon'>&#x1F4B1;</span> Zahlungs-Setup</button></li>
-    <li><button class='nav-btn' data-go='sumup-config'><span class='nav-icon'>&#128179;</span> SumUp</button></li>
-    <li><button class='nav-btn' data-go='network-config'><span class='nav-icon'>&#128423;</span> Netzwerk</button></li>
-    <li><button class='nav-btn' data-go='password-config'><span class='nav-icon'>&#128274;</span> Sicherheit</button></li>
-    <li><button class='nav-btn' data-go='saleslog-section'><span class='nav-icon'>&#128202;</span> Verkaufsstatistik</button></li>
-    <li><button class='nav-btn' data-go='logs'><span class='nav-icon'>&#128466;</span> Logs</button></li>
-    <li><button class='nav-btn' data-go='ota-update-section'><span class='nav-icon'>&#128229;</span> Update</button></li>
-  </ul>
-<div class='footer-info'>
-    FW )HTML"; html += FIRMWARE_VERSION; html += R"HTML(<br>
-    Hanimat<br>
-    <a href='https://www.hanimat.at' target='_blank' style='color:#666; text-decoration:none;'>www.hanimat.at</a><br>
-    <a href='/logout' style='color:#c00; text-decoration:none; font-weight:600;'>&#x23FB; Abmelden</a>
-  </div>
-</nav>
-
-<!-- Content -->
-<div class='main'>
-
-  <!-- DASHBOARD -->
-  <section id='dashboard' class='page'>
-    <div class='top-bar'><h1>Dashboard</h1></div>
-
-    <div class='stats-grid'>
-      <div class='stat-box'>
-        <div class='stat-val stat-highlight'>)HTML"; html += centsToEurStr(creditCents) + R"HTML( &euro;</div>
-        <div class='stat-lbl'>Aktuelles Guthaben</div>
-      </div>
-      <div class='stat-box'>
-        <div class='stat-val'>)HTML"; html += String(countAvailableSlots()) + "/" + String(activeSlots) + R"HTML(</div>
-        <div class='stat-lbl'>Verfügbare Fächer</div>
-      </div>
-      <div class='stat-box'>
-        <div class='stat-val'>)HTML"; html += String(millis()/60000) + R"HTML( min</div>
-        <div class='stat-lbl'>System Laufzeit</div>
-      </div>
-      <div class='stat-box'>
-        <div class='stat-val )HTML";
-// Heap-Farbe: grün > 60KB, gelb 30–60KB, rot < 30KB
-uint32_t heapNow = ESP.getFreeHeap();
-if      (heapNow >= 60000) html += "stat-heap-ok";
-else if (heapNow >= 30000) html += "stat-heap-warn";
-else                        html += "stat-heap-crit";
-html += R"HTML('>)HTML"; html += String(heapNow / 1024) + R"HTML( KB</div>
-        <div class='stat-lbl'>Freier Heap (Min: )HTML"; html += String(ESP.getMinFreeHeap()/1024) + R"HTML( KB)</div>
-      </div>
-      <div class='stat-box'>
-        <div class='stat-val )HTML";
-html += (wasUnexpectedReset ? "stat-heap-crit" : "stat-heap-ok");
-html += R"HTML(' style='font-size:0.95rem; word-break:break-word;'>)HTML";
-html += lastResetReason + R"HTML(</div>
-        <div class='stat-lbl'>Letzter Neustart &nbsp;|&nbsp; Absturz: )HTML";
-html += String(crashCount) + R"HTML(x</div>
-        )HTML";
-if (crashCount > 0) {
-  html += R"HTML(<form action='/resetcrashcount' method='post' style='margin-top:0.6rem;'>
-          <button type='submit' style='font-size:0.75rem; padding:4px 10px; background:transparent; border:1px solid #c00; color:#c00; border-radius:6px; cursor:pointer;'>&#x21BA; Zähler zurücksetzen</button>
-        </form>)HTML";
-}
-html += R"HTML(
-      </div>
-      <div class='stat-box' style='border:1px solid rgba(255,180,0,0.35); background:rgba(255,180,0,0.07);'>
-        <div class='stat-val stat-highlight' style='font-size:1.25rem;'>)HTML" + centsToEurStr(cashBoxCents) + R"HTML( &euro;</div>
-        <div class='stat-lbl'>&#x1F4B0; Kassenstand (Bar)</div>
-      </div>
-    </div>
-
-    <!-- Quick Actions Bar -->
-    <div class='quick-actions'>
-      <form action='/addcredit' method='post' style='flex:1; min-width:200px;'>
-        <label style='font-size:0.8rem; color:#888; margin-bottom:4px; display:block;'>Guthaben simulieren</label>
-        <div style='display:flex; gap:10px;'>
-          <input type='number' step='0.01' name='amount' placeholder='Betrag' required style='margin:0;'>
-          <button type='submit' class='btn-main' style='width:auto; margin:0;'>Go</button>
-        </div>
-      </form>
-      <form action='/resetcredit' method='post'>
-        <button type='submit' class='btn-sec' style='border-color:var(--danger); color:var(--danger);'>Reset &euro;</button>
-      </form>
-      <div style='width:1px; height:40px; background:var(--border); margin:0 10px; display:none;'></div> <!-- Seperator optional -->
-      <form action='/resetcashbox' method='post' data-confirm='Kassenstand auf 0 setzen?' style='margin:0;'>
-        <button type='submit' class='btn-sec' style='color:#f0a000; border-color:#f0a000;'>&#x1F4B0; Kasse geleert</button>
-      </form>
-      <form action='/refillall' method='post' style='flex:1;'>
-         <button type='submit' class='btn-sec'>Alle Auffüllen</button>
-      </form>
-      <form action='/triggerallrelays' method='post' style='flex:1;'>
-         <button type='submit' class='btn-sec'>Relais Test</button>
-      </form>
-    </div>
-
-    <h2>Fach Status & Steuerung</h2>
-    <div class='slots-grid'>
-)HTML";
-  for (int i = 0; i < activeSlots; i++) {
-    String badgeClass = "b-ok";
-    String statusText = "Bereit";
-    String lockIcon = "&#128275;"; // open lock
-    
-    if (slotLocked[i]) { 
-        statusText = "Gesperrt"; 
-        badgeClass = "b-lock"; 
-        lockIcon = "&#128274;"; // closed lock
-    } else if (!slotAvailable[i]) { 
-        statusText = "Leer"; 
-        badgeClass = "b-empty"; 
-    }
-
-    html += "<div class='slot-card'>";
-    // Header Part
-    html += "<div class='slot-header'>";
-    html += "<div><div class='slot-title'>Fach #" + String(i+1) + "</div><div class='slot-price'>" + centsToEurStr(slotPriceCents[i]) + " &euro;</div></div>";
-    html += "<span class='badge " + badgeClass + "'>" + statusText + "</span>";
-    html += "</div>"; // end header
-
-    // Controls Part
-    html += "<div class='slot-controls'>";
-    
-    // Lock Button
-    html += "<form action='/toggleslotlock' method='post' style='display:contents;'><input type='hidden' name='slot' value='" + String(i) + "'>";
-    html += "<button type='submit' class='icon-btn' title='Sperren/Entsperren'>" + lockIcon + "</button></form>";
-
-    // Test Button
-    html += "<form action='/triggerrelay' method='post' style='display:contents;'><input type='hidden' name='slot' value='" + String(i) + "'>";
-    html += "<button type='submit' class='icon-btn btn-test' title='Relais Test'>&#9889;</button></form>";
-
-    // Refill Button
-    html += "<form action='/refill' method='post' style='display:contents;'><input type='hidden' name='slot' value='" + String(i) + "'>";
-    html += "<button type='submit' class='icon-btn btn-refill' title='Auffüllen'>&#128260;</button></form>";
-    
-    html += "</div></div>"; // end card
-  }
-  html += R"HTML(
-    </div>
-  </section>
-
-  <!-- CONFIG SLOTS -->
-  <section id='slots-config' class='page' style='display:none;'>
-    <div class='top-bar'><h1>Slot Konfiguration</h1></div>
-    <div class='stat-box' style='max-width:500px; margin-bottom:2rem;'>
-       <form action='/updateslots' method='post'>
-         <div class='input-group'>
-           <label>Anzahl aktiver Fächer (Max )HTML"; html += String(MAX_SLOTS) + R"HTML()</label>
-           <input type='number' name='maxSlots' value=')HTML" + String(activeSlots) + R"HTML(' min='1' max=')HTML" + String(MAX_SLOTS) + R"HTML(' required>
-         </div>
-         <button type='submit' class='btn-main'>Anzahl Speichern</button>
-       </form>
-    </div>
-    
-    <h2>Preise Einstellen</h2>
-
-    <!-- Schnell-Befüllung: Alle auf gleichen Preis -->
-    <div style='display:flex; gap:10px; align-items:flex-end; margin-bottom:1.5rem; flex-wrap:wrap;'>
-      <div class='input-group' style='margin:0; flex:1; min-width:140px; max-width:200px;'>
-        <label style='font-size:0.8rem;'>Gleicher Preis für alle</label>
-        <input type='number' id='bulkPrice' step='0.01' min='0' placeholder='z.B. 5.00' style='margin:0;'>
-      </div>
-      <button type='button' data-action='apply-bulk' class='btn-sec' style='height:46px; white-space:nowrap;'>&#128256; Alle übernehmen</button>
-    </div>
-
-    <!-- Kompakt-Grid aller Fächer -->
-    <form action='/updateprice' method='post' id='priceForm'>
-    <div style='display:grid; grid-template-columns:repeat(auto-fill, minmax(130px,1fr)); gap:8px; margin-bottom:1.5rem;'>
-)HTML";
-  for (int i = 0; i < activeSlots; i++) {
-    String dotColor = slotLocked[i] ? "#6B7280" : (slotAvailable[i] ? "var(--success)" : "var(--danger)");
-    html += "<div style='background:var(--card); border:1px solid var(--border); border-radius:10px; padding:10px 12px;'>";
-    html += "<div style='display:flex; align-items:center; gap:6px; margin-bottom:6px;'>";
-    html += "<span style='width:8px;height:8px;border-radius:50%;background:" + dotColor + ";flex-shrink:0;'></span>";
-    html += "<span style='font-size:0.78rem; color:var(--text-sec); font-weight:600;'>Fach #" + String(i+1) + "</span>";
-    html += "</div>";
-    html += "<div style='display:flex; align-items:center; gap:4px;'>";
-    html += "<input type='number' step='0.01' min='0' name='price_" + String(i) + "' value='" + centsToEurStr(slotPriceCents[i]) + "' style='margin:0; padding:6px 8px; font-size:0.9rem; width:100%;'>";
-    html += "<span style='font-size:0.8rem; color:var(--text-sec); flex-shrink:0;'>€</span>";
-    html += "</div></div>";
-  }
-  html += R"HTML(
-    </div>
-    <button type='submit' class='btn-main'>&#128190; Alle Preise Speichern</button>
-    </form>
-
-  </section>
-
-  <!-- CONFIG DISPLAY -->
-  <section id='display-config' class='page' style='display:none;'>
-    <div class='top-bar'><h1>Display Texte</h1></div>
-    <div class='stat-box' style='max-width:600px;'>
-      <form action='/savedisplayconfig' method='post'>
-        <div class='input-group'>
-          <label>Slogan (Zeile 1)</label>
-          <input type='text' name='slogan' value=')HTML" + displaySlogan + R"HTML(' maxlength=')HTML" + String(SLOGAN_MAX_LENGTH) + R"HTML('>
-        </div>
-        <div class='input-group'>
-          <label>Footer (Zeile 2)</label>
-          <input type='text' name='footer' value=')HTML" + displayFooter + R"HTML(' maxlength='30'>
-        </div>
-        <button type='submit' class='btn-main'>Texte übernehmen</button>
-      </form>
-    </div>
-  </section>
-
-  <!-- CONFIG TIMING -->
-  <section id='timing-config' class='page' style='display:none;'>
-    <div class='top-bar'><h1>Zeitsteuerung</h1></div>
-    <div class='stat-box'>
-      <form action='/savetimingconfig' method='post'>
-
-        <p class='timing-section-title'>&#127981; Münzakzeptor</p>
-        <div class='timing-grid'>
-          <div class='input-group'>
-            <div class='timing-label'>
-              Münzeinwurf Verzögerung
-              <span class='unit'>ms</span>
-              <i class='info-icon' >i<span class='tip'>Wartezeit nach dem Einwurf einer Münze, bevor die Impulse ausgewertet werden. Bei Rauschproblemen oder Fehlzählungen erhöhen. Standardwert: 150 ms</span></i>
-            </div>
-            <input type='number' name='coin_delay' min='0' max='5000' value=')HTML" + String(COIN_PROCESSING_DELAY) + R"HTML('>
-          </div>
-        </div>
-
-        <p class='timing-section-title'>&#128181; Scheinakzeptor</p>
-        <div class='timing-grid'>
-          <div class='input-group'>
-            <div class='timing-label'>
-              Entprellzeit Scheineinwurf
-              <span class='unit'>ms</span>
-              <i class='info-icon' >i<span class='tip'>Mindestabstand zwischen zwei Impuls-Flanken des Scheinprüfers. Verhindert Doppelzählungen durch Prellen. Standardwert: 75 ms</span></i>
-            </div>
-            <input type='number' name='bill_isr_debounce' min='0' max='500' value=')HTML" + String(BILL_ISR_DEBOUNCE_MS) + R"HTML('>
-          </div>
-          <div class='input-group'>
-            <div class='timing-label'>
-              Scheingruppen Timeout
-              <span class='unit'>ms</span>
-              <i class='info-icon' >i<span class='tip'>Wartezeit nach dem letzten Impuls eines Scheins, bis der Gesamtwert verarbeitet wird. Muss größer sein als die Lücke zwischen den Impulsen eines Scheins. Standardwert: 1500 ms</span></i>
-            </div>
-            <input type='number' name='bill_group_timeout' min='100' max='10000' value=')HTML" + String(BILL_GROUP_PROCESSING_TIMEOUT_MS) + R"HTML('>
-          </div>
-        </div>
-
-        <p class='timing-section-title'>&#9881; Ausgabe &amp; Bedienung</p>
-        <div class='timing-grid'>
-          <div class='input-group'>
-            <div class='timing-label'>
-              Relais Ausgabezeit
-              <span class='unit'>ms</span>
-              <i class='info-icon' >i<span class='tip'>Wie lange das Ausgabe-Relais aktiviert bleibt (= Motorlaufzeit). Zu kurz &rarr; Produkt wird nicht ausgegeben. Standardwert: 5000 ms</span></i>
-            </div>
-            <input type='number' name='disp_time' min='500' max='30000' value=')HTML" + String(DISPENSE_RELAY_ON_TIME) + R"HTML('>
-          </div>
-          <div class='input-group'>
-            <div class='timing-label'>
-              Tastatureingabe Timeout
-              <span class='unit'>ms</span>
-              <i class='info-icon' >i<span class='tip'>Wartezeit auf eine zweite Ziffer nach dem ersten Tastendruck. Standardwert: 3000 ms</span></i>
-            </div>
-            <input type='number' name='keypad_time' min='500' max='15000' value=')HTML" + String(KEYPAD_INPUT_TIMEOUT) + R"HTML('>
-          </div>
-          <div class='input-group'>
-            <div class='timing-label'>
-              Fachauswahl Timeout
-              <span class='unit'>ms</span>
-              <i class='info-icon' >i<span class='tip'>Wie lange ein gew&auml;hltes Fach aktiv bleibt, ohne dass der Kauf best&auml;tigt wird. Standardwert: 10000 ms</span></i>
-            </div>
-            <input type='number' name='slot_sel_time' min='2000' max='60000' value=')HTML" + String(SLOT_SELECTION_TIMEOUT) + R"HTML('>
-          </div>
-          <div class='input-group'>
-            <div class='timing-label'>
-              Display Ruhemodus
-              <span class='unit'>ms</span>
-              <i class='info-icon' >i<span class='tip'>Nach dieser Inaktivit&auml;tsdauer kehrt das Display automatisch zum Startbildschirm zur&uuml;ck. Standardwert: 20000 ms</span></i>
-            </div>
-            <input type='number' name='disp_timeout' min='5000' max='300000' value=')HTML" + String(DISPLAY_TIMEOUT) + R"HTML('>
-          </div>
-        </div>
-
-        <p class='timing-section-title'>&#128274; Web-Interface</p>
-        <div class='timing-grid'>
-          <div class='input-group'>
-            <div class='timing-label'>
-              Sitzungs Timeout
-              <span class='unit'>Sekunden</span>
-              <i class='info-icon' >i<span class='tip'>Nach dieser Zeit ohne Aktivit&auml;t im Web-Interface wird die Anmeldung automatisch beendet. Standardwert: 600 s</span></i>
-            </div>
-            <input type='number' name='web_timeout' min='30' max='86400' value=')HTML" + String(WEB_TIMEOUT / 1000) + R"HTML('>
-          </div>
-        </div>
-
-        <p class='timing-section-title'>&#128200; System</p>
-        <label class='check-row'>
-          <input type='checkbox' name='status_enabled' )HTML" + String(statusEnabled ? "checked" : "") + R"HTML(>
-          <div>
-            <div style='font-weight:600;'>&#128268; Status-Ping aktiviert</div>
-            <div style='font-size:0.8rem; color:var(--text-sec); margin-top:2px;'>Sendet alle 60 Minuten einen anonymen Heartbeat an hanimat.at. Wird f&uuml;r System&uuml;berwachung genutzt.</div>
-          </div>
-        </label>
-
-        <button type='submit' class='btn-main' style='margin-top:2rem;'>Einstellungen Speichern</button>
-      </form>
-    </div>
-  </section>
-
-  <!-- CONFIG TELEGRAM -->
-  <section id='telegram-config' class='page' style='display:none;'>
-    <div class='top-bar'><h1>Telegram</h1></div>
-    <div class='stat-box'>
-      <form action='/savetelegramconfig' method='post'>
-        <div style='display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:1.5rem;'>
-          <label class='check-row' style='margin-bottom:0; flex-shrink:0;'>
-            <input type='checkbox' name='tg_enabled' )HTML" + String(telegramEnabled ? "checked" : "") + R"HTML(>
-            <b>Telegram Integration Aktivieren</b>
-          </label>
-          <a href='https://hanimat.at/telegram.html' target='_blank' style='color:var(--brand); text-decoration:none; font-size:0.8rem; background:rgba(255,159,28,0.1); padding:5px 12px; border-radius:8px; border:1px solid rgba(255,159,28,0.3);'>
-            &#128214; Setup-Anleitung
-          </a>
-        </div>
-        <p class='timing-section-title'>&#128272; Bot-Zugangsdaten</p>
-        <div style='display:grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap:1.5rem;'>
-          <div class='input-group'>
-            <div class='timing-label'>Bot Token
-              <i class='info-icon' >i<span class='tip'>Den Token erh&auml;ltst du vom @BotFather auf Telegram.</span></i>
-            </div>
-            <input type='password' name='tg_token' value=')HTML" + telegramBotToken + R"HTML('>
-          </div>
-          <div class='input-group'>
-            <div class='timing-label'>Chat ID
-              <i class='info-icon' >i<span class='tip'>Die numerische ID deines Chats. Mit @userinfobot herausfinden.</span></i>
-            </div>
-            <input type='text' name='tg_chat_id' value=')HTML" + telegramChatId + R"HTML('>
-          </div>
-        </div>
-        <p class='timing-section-title'>&#128276; Benachrichtigungen</p>
-        <label class='check-row'>
-          <input type='checkbox' name='notify_sale' )HTML" + String(telegramNotifyOnSale ? "checked" : "") + R"HTML(>
-          <div><div style='font-weight:600;'>&#127815; Verkauf</div><div style='font-size:0.8rem; color:var(--text-sec); margin-top:2px;'>Nachricht bei jedem erfolgreichen Kauf</div></div>
-        </label>
-        <label class='check-row' style='margin-top:0.5rem;'>
-          <input type='checkbox' name='notify_almost_empty' )HTML" + String(telegramNotifyAlmostEmpty ? "checked" : "") + R"HTML(>
-          <div><div style='font-weight:600;'>&#9888;&#65039; Fast leer</div><div style='font-size:0.8rem; color:var(--text-sec); margin-top:2px;'>Warnung wenn die Restmenge den Schwellwert erreicht</div></div>
-        </label>
-        <div style='margin-left:44px; margin-top:0.4rem; margin-bottom:0.8rem;'>
-          <div class='timing-label' style='margin-bottom:0.4rem;'>Schwellwert (St&uuml;ck)</div>
-          <input type='number' name='almost_empty_threshold' min='1' max='50' value=')HTML" + String(almostEmptyThreshold) + R"HTML(' style='max-width:140px;'>
-        </div>
-        <label class='check-row' style='margin-top:0.5rem;'>
-          <input type='checkbox' name='notify_empty' )HTML" + String(telegramNotifyEmpty ? "checked" : "") + R"HTML(>
-          <div><div style='font-weight:600;'>&#128683; Fach leer</div><div style='font-size:0.8rem; color:var(--text-sec); margin-top:2px;'>Meldung wenn ein Fach vollst&auml;ndig leer ist</div></div>
-        </label>
-        <label class='check-row' style='margin-top:0.5rem;'>
-          <input type='checkbox' name='notify_crash' )HTML" + String(telegramNotifyCrash ? "checked" : "") + R"HTML(>
-          <div><div style='font-weight:600;'>&#128680; Absturz / Neustart</div><div style='font-size:0.8rem; color:var(--text-sec); margin-top:2px;'>Benachrichtigung bei unerwartetem Neustart</div></div>
-        </label>
-        <label class='check-row' style='margin-top:0.5rem;'>
-          <input type='checkbox' name='notify_bruteforce' )HTML" + String(telegramNotifyBruteForce ? "checked" : "") + R"HTML(>
-          <div><div style='font-weight:600;'>&#128272; Brute-Force Angriff</div><div style='font-size:0.8rem; color:var(--text-sec); margin-top:2px;'>Benachrichtigung bei zu vielen fehlerhaften Login-Versuchen</div></div>
-        </label>
-        <button type='submit' class='btn-main' style='margin-top:1.5rem;'>Einstellungen Speichern</button>
-      </form>
-      <form action='/sendtesttelegram' method='post' style='margin-top:1.5rem; border-top:1px solid var(--border); padding-top:1.5rem;'>
-        <p style='color:var(--text-sec); font-size:0.85rem; margin:0 0 1rem 0;'>Sendet eine Test-Nachricht an die oben eingetragene Chat ID.</p>
-        <button type='submit' class='btn-sec'>&#9992;&#65039; Test-Nachricht Senden</button>
-      </form>
-    </div>
-  </section>
-
-  <!-- CONFIG NETWORK -->
-  )HTML";
-  preferences.begin("hanimat", false);
-  String staticIP_val = preferences.getString("static_ip", "");
-  String gateway_val  = preferences.getString("gateway", "");
-  String subnet_val   = preferences.getString("subnet", "");
-  String dns1_val     = preferences.getString("dns1", "8.8.8.8");
-  preferences.end();
-  // CONFIG SUMUP - vor network-config, damit der Block bei knappem Heap nicht abgeschnitten wird
-  html += R"HTML(<section id='sumup-config' class='page' style='display:none;'>
-    <div class='top-bar'><h1>SumUp Terminal</h1></div>
-    <div class='stat-box'>
-       <form action='/savesumup' method='post'>
-         <label class='check-row'>
-            <input type='checkbox' name='enabled' )HTML" + String(sumupEnabled ? "checked" : "") + R"HTML(>
-            <b>SumUp Aktiviert</b>
-         </label>
-         <div class='input-group'><label>API Key</label><input type='password' name='apiKey' value=')HTML" + sumupApiKey + R"HTML('></div>
-         <div class='input-group'><label>Merchant ID</label><input type='text' name='merchantId' value=')HTML" + sumupMerchantId + R"HTML('></div>
-         <div class='input-group'><label>Reader ID</label><input type='text' name='readerId' value=')HTML" + sumupReaderId + R"HTML('></div>
-         <div class='input-group'><label>Timeout (s)</label><input type='number' name='timeout' value=')HTML" + String(sumupTimeout/1000) + R"HTML(' min='10'></div>
-         <button type='submit' class='btn-main'>Speichern</button>
-       </form>
-       <h2 style='margin-top:2rem;'>Pairing</h2>
-       <div style='background:rgba(255,255,255,0.05); padding:1.5rem; border-radius:10px;'>
-          <form action='/pairsumup' method='post' style='margin-bottom:1rem;'>
-            <div style='display:flex; gap:10px;'>
-               <input type='text' name='code' placeholder='Code (8-stellig)' style='margin:0;'>
-               <button type='submit' class='btn-sec' style='width:auto; margin:0;'>Koppeln</button>
-            </div>
-          </form>
-          <div style='display:flex; gap:10px; flex-wrap:wrap;'>
-            <form action='/checksumup' method='get'>
-               <button type='submit' class='btn-sec'>&#128268; Reader pr&uuml;fen</button>
-            </form>
-            <form action='/disconnectsumup' method='post'>
-               <button type='submit' class='btn-sec' style='color:var(--danger); border-color:var(--danger);'>Entkoppeln (Reset)</button>
-            </form>
-          </div>
-       </div>
-    </div>
-  </section>)HTML";
-
-  html += R"HTML(
-  <section id='network-config' class='page' style='display:none;'>
-    <div class='top-bar'><h1>Netzwerk</h1></div>
-    <div style='display:grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap:1rem; margin-bottom:1.5rem;'>
-      <div class='stat-box' style='padding:1rem;'>
-        <div class='stat-lbl'>IP-Adresse</div>
-        <div style='font-size:1.1rem; font-weight:700; color:var(--success); margin-top:4px;'>)HTML" + WiFi.localIP().toString() + R"HTML(</div>
-      </div>
-      <div class='stat-box' style='padding:1rem;'>
-        <div class='stat-lbl'>Modus</div>
-        <div style='font-size:1.1rem; font-weight:700; margin-top:4px; color:)HTML" + String(staticIP_val.length() > 0 ? "var(--brand)" : "var(--success)") + R"HTML(;'>)HTML" + String(staticIP_val.length() > 0 ? "Statisch" : "DHCP") + R"HTML(</div>
-      </div>
-      <div class='stat-box' style='padding:1rem;'>
-        <div class='stat-lbl'>WLAN-Netz</div>
-        <div style='font-size:1rem; font-weight:700; margin-top:4px;'>)HTML" + WiFi.SSID() + R"HTML(</div>
-      </div>
-      <div class='stat-box' style='padding:1rem;'>
-        <div class='stat-lbl'>Signal</div>
-        <div style='font-size:1.1rem; font-weight:700; margin-top:4px;'>)HTML" + String(WiFi.RSSI()) + R"HTML( dBm</div>
-      </div>
-      <div class='stat-box' style='padding:1rem;'>
-        <div class='stat-lbl'>MAC-Adresse</div>
-        <div style='font-size:0.85rem; font-weight:600; margin-top:4px; color:var(--text-sec);'>)HTML" + WiFi.macAddress() + R"HTML(</div>
-      </div>
-    </div>
-    <div class='stat-box'>
-      <form action='/setstaticip' method='post' id='netForm'>
-        <p class='timing-section-title' style='margin-top:0;'>&#127758; IP-Konfiguration</p>
-        <div style='display:flex; gap:0.75rem; margin-bottom:1.5rem;'>
-          <button type='button' id='btnDhcp' data-action='set-net' data-mode='dhcp'
-            style='flex:1; padding:0.75rem; border-radius:10px; border:2px solid; cursor:pointer; font-weight:700; font-size:0.9rem; transition:0.2s;)HTML"
-            + String(staticIP_val.length() == 0 ? "background:var(--success);color:#000;border-color:var(--success);" : "background:transparent;color:var(--text-sec);border-color:var(--border);")
-            + R"HTML('>
-            &#127760; DHCP
-          </button>
-          <button type='button' id='btnStatic' data-action='set-net' data-mode='static'
-            style='flex:1; padding:0.75rem; border-radius:10px; border:2px solid; cursor:pointer; font-weight:700; font-size:0.9rem; transition:0.2s;)HTML"
-            + String(staticIP_val.length() > 0 ? "background:var(--brand);color:#000;border-color:var(--brand);" : "background:transparent;color:var(--text-sec);border-color:var(--border);")
-            + R"HTML('>
-            &#128204; Statische IP
-          </button>
-        </div>
-        <div id='staticFields' style='display:)HTML" + String(staticIP_val.length() > 0 ? "" : "none") + R"HTML(;'>
-          <div style='display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:1.5rem;'>
-            <div class='input-group'><div class='timing-label'>IP-Adresse</div>
-              <input type='text' id='inp_static_ip' name='static_ip' placeholder='z.B. 192.168.1.100' value=')HTML" + staticIP_val + R"HTML('></div>
-            <div class='input-group'><div class='timing-label'>Gateway</div>
-              <input type='text' name='gateway' placeholder='z.B. 192.168.1.1' value=')HTML" + gateway_val + R"HTML('></div>
-            <div class='input-group'><div class='timing-label'>Subnetzmaske</div>
-              <input type='text' name='subnet' placeholder='255.255.255.0' value=')HTML" + subnet_val + R"HTML('></div>
-            <div class='input-group'><div class='timing-label'>DNS-Server</div>
-              <input type='text' name='dns1' placeholder='8.8.8.8' value=')HTML" + dns1_val + R"HTML('></div>
-          </div>
-        </div>
-        <div style='display:flex; gap:1rem; margin-top:1.5rem; flex-wrap:wrap;'>
-          <button type='submit' class='btn-main' style='flex:1; min-width:180px;'>&#128190; Speichern &amp; Neustart</button>
-        </div>
-        <p style='color:var(--text-sec); font-size:0.8rem; margin:0.8rem 0 0 0;'>&#9888;&#65039; Nach dem Speichern startet der Automat neu.</p>
-      </form>
-    </div>
-
-    <!-- WLAN wechseln -->
-    <div class='stat-box' style='margin-top:1rem;'>
-      <p class='timing-section-title' style='margin-top:0;'>&#128246; WLAN wechseln</p>
-      <p style='color:var(--text-sec); font-size:0.82rem; margin:0 0 1.2rem 0;'>
-        Aktuell verbunden mit: <b>)HTML" + WiFi.SSID() + R"HTML(</b><br>
-        Nach dem Speichern verbindet sich der Automat mit dem neuen Netz und startet neu.<br>
-        Falls das Netz nicht erreichbar ist, wechselt er automatisch in den Setup-Modus<br>
-        (AP: <b>HANIMAT-Setup</b> &middot; Passwort: <b>Honig1234</b>).
-      </p>
-      <form action='/setwifi' method='post' data-confirm='WLAN wirklich wechseln? Das Gerät startet neu.'>
-        <div style='display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:1.5rem; margin-bottom:1.2rem;'>
-          <div class='input-group'>
-            <div class='timing-label'>SSID (Netzwerkname)</div>
-            <input type='text' name='ssid' placeholder='Mein WLAN' required autocomplete='off'>
-          </div>
-          <div class='input-group'>
-            <div class='timing-label'>Passwort</div>
-            <input type='password' name='pass' placeholder='••••••••' autocomplete='new-password'>
-          </div>
-        </div>
-        <button type='submit' class='btn-main' style='width:auto;'>&#128246; Verbinden &amp; Neustart</button>
-      </form>
-    </div>
-  </section>
-
-  <!-- CONFIG PASSWORD -->
-  <section id='password-config' class='page' style='display:none;'>
-    <div class='top-bar'><h1>Sicherheit</h1></div>
-    <div class='stat-box' style='max-width:500px;'>
-      <form action='/changepassword' method='post'>
-         <div class='input-group'>
-            <label>Neues Admin Passwort</label>
-            <input type='password' name='newPassword' required minlength='4' placeholder='****'>
-         </div>
-         <button type='submit' class='btn-main'>Passwort &auml;ndern</button>
-      </form>
-    </div>
-  </section>
-
-  <!-- LOGS -->
-  <section id='logs' class='page' style='display:none;'>
-    <div class='top-bar'><h1>System Logs</h1></div>
-    <div class='stat-box'>
-       <div id='log-output'>Lade Daten...</div>
-    </div>
-  </section>
-
-  <!-- UPDATE -->
-  <section id='ota-update-section' class='page' style='display:none;'>
-    <div class='top-bar'><h1>Firmware Update</h1></div>
-    <div class='stat-box'>
-       <h2>Online Update</h2>
-       <div style='background:rgba(255,255,255,0.05); padding:1.5rem; border-radius:10px; margin-bottom:2rem;'>
-         <div id='online-update-status' style='margin-bottom:1rem; color:var(--brand);'>Status: Warte auf Pr&uuml;fung...</div>
-         <div style='display:flex; gap:1rem;'>
-            <button data-action='check-update' class='btn-sec' style='width:auto;'>Version Pr&uuml;fen</button>
-            <form action='/start-full-update' method='post' id='update-form' style='display:none;'>
-                <button type='submit' class='btn-main' style='width:auto;'>Update Starten</button>
-            </form>
-         </div>
-       </div>
-       <h2>Datei Upload</h2>
-       <p style='color:var(--muted); margin-bottom:1rem; font-size:0.9rem;'>Firmware: <code>firmware.bin</code> &nbsp;|&nbsp; WebIF: <code>littlefs.bin</code></p>
-       <div style='display:flex; gap:1.5rem; flex-wrap:wrap;'>
-         <div style='flex:1; min-width:220px;'>
-           <h3 style='margin-bottom:0.75rem;'>Firmware</h3>
-           <form method='POST' action='/ota-upload' enctype='multipart/form-data'>
-             <div class='input-group'>
-               <input type='file' name='update' accept='.bin' required style='padding:1rem;'>
-             </div>
-             <button type='submit' class='btn-main'>Firmware flashen</button>
-           </form>
-         </div>
-         <div style='flex:1; min-width:220px;'>
-           <h3 style='margin-bottom:0.75rem;'>WebIF (LittleFS)</h3>
-           <form method='POST' action='/ota-upload-fs' enctype='multipart/form-data'>
-             <div class='input-group'>
-               <input type='file' name='update' accept='.bin' required style='padding:1rem;'>
-             </div>
-             <button type='submit' class='btn-sec'>WebIF flashen</button>
-           </form>
-         </div>
-       </div>
-    </div>
-  </section>
-
-  <!-- VERKAUFSSTATISTIK -->
-  <section id='saleslog-section' class='page' style='display:none;'>
-    <div class='top-bar'><h1>&#128202; Verkaufsstatistik</h1></div>
-
-    <!-- Summary Cards -->
-    <div class='stats-grid' style='margin-bottom:1.5rem; grid-template-columns:repeat(auto-fit,minmax(130px,1fr));'>
-      <div class='stat-box' style='text-align:center;'>
-        <div class='stat-val stat-highlight' style='font-size:1.4rem;'>)HTML"; html += centsToEurStr(totalRevenueCents) + R"HTML( &euro;</div>
-        <div class='stat-lbl'>Gesamtumsatz</div>
-      </div>
-      <div class='stat-box' style='text-align:center;'>
-        <div class='stat-val' style='font-size:1.4rem;'>)HTML";
-        { int total = 0; for(int i=0;i<activeSlots;i++) total+=slotSalesCount[i]; html += String(total); }
-        html += R"HTML(</div>
-        <div class='stat-lbl'>Verk&auml;ufe gesamt</div>
-      </div>
-      <div class='stat-box' style='text-align:center;'>
-        <div class='stat-val' id='sl-cash' style='font-size:1.4rem; color:var(--brand);'>-</div>
-        <div class='stat-lbl'>&#x1F4B5; Bar (letzte 50)</div>
-      </div>
-      <div class='stat-box' style='text-align:center;'>
-        <div class='stat-val' id='sl-card' style='font-size:1.4rem; color:#00b478;'>-</div>
-        <div class='stat-lbl'>&#x1F4B3; Karte (letzte 50)</div>
-      </div>
-      <div class='stat-box' style='text-align:center; border:1px solid rgba(255,180,0,0.35); background:rgba(255,180,0,0.07);'>
-        <div class='stat-val stat-highlight' style='font-size:1.4rem;'>)HTML" + centsToEurStr(cashBoxCents) + R"HTML( &euro;</div>
-        <div class='stat-lbl'>&#x1F4B0; Kassenstand</div>
-      </div>
-    </div>
-
-    <!-- Action Buttons -->
-    <div style='display:flex; gap:0.6rem; flex-wrap:wrap; margin-bottom:1.25rem;'>
-      <form action='/resetcashbox' method='post' data-confirm='Kassenstand wirklich auf 0 setzen?' style='margin:0;'>
-        <button type='submit' class='btn-sec' style='color:#f0a000; border-color:#f0a000; width:auto; padding:0.4rem 1rem; font-size:0.82rem;'>&#x1F4B0; Kasse geleert</button>
-      </form>
-      <form action='/resetsalesstats' method='post' data-confirm='Alle Verkaufsstatistiken wirklich löschen?' style='margin:0;'>
-        <button type='submit' class='btn-sec' style='color:var(--danger); border-color:var(--danger); width:auto; padding:0.4rem 1rem; font-size:0.82rem;'>&#128465; Statistik l&ouml;schen</button>
-      </form>
-    </div>
-
-    <!-- Sales Table -->
-    <div class='stat-box'>
-      <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem; flex-wrap:wrap; gap:0.5rem;'>
-        <div style='font-weight:700; font-size:0.9rem;'>Letzte Verk&auml;ufe <span id='sl-count-label' style='font-weight:400; color:var(--text-sec); font-size:0.8rem;'></span></div>
-        <div style='font-size:0.75rem; color:var(--text-sec); background:rgba(255,255,255,0.06); padding:3px 10px; border-radius:8px;'>max. 50 Eintr&auml;ge</div>
-      </div>
-      <div style='overflow-x:auto;'>
-        <table id='sales-table' style='width:100%; border-collapse:collapse; font-size:0.87rem;'>
-          <thead>
-            <tr style='color:var(--text-sec); border-bottom:2px solid var(--border);'>
-              <th style='text-align:left; padding:8px 10px; font-weight:600;'>Zeit</th>
-              <th style='text-align:center; padding:8px 10px; font-weight:600;'>Fach</th>
-              <th style='text-align:right; padding:8px 10px; font-weight:600;'>Preis</th>
-              <th style='text-align:center; padding:8px 10px; font-weight:600;'>Zahlung</th>
-            </tr>
-          </thead>
-          <tbody id='sales-tbody'>
-            <tr><td colspan='4' style='padding:1.5rem; color:var(--text-sec); text-align:center;'>Lade Daten...</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <div id='sales-empty' style='display:none; text-align:center; color:var(--text-sec); padding:2rem; font-size:0.9rem;'>&#128203; Noch keine Verk&auml;ufe</div>
-    </div>
-  </section>
-
-  <!-- CONFIG ZAHLUNGS-PULSE -->
-  <section id='payment-config' class='page' style='display:none;'>
-    <div class='top-bar'><h1>&#x1F4B1; Zahlungs-Setup</h1></div>
-    <form action='/savepaymentconfig' method='post'>
-
-    <!-- Zahlungskanäle -->
-    <div class='stat-box' style='margin-bottom:1rem;'>
-      <h2 style='margin:0 0 1rem 0; font-size:1rem; color:var(--text-sec); font-weight:600; letter-spacing:0.04em; text-transform:uppercase;'>&#x26A1; Zahlungskan&auml;le</h2>
-      <div style='display:grid; grid-template-columns:1fr 1fr; gap:1rem;'>
-        <label style='display:flex; flex-direction:column; align-items:center; gap:0.5rem; background:var(--card-bg); border:2px solid )HTML" + String(coinAcceptorEnabled ? "var(--brand)" : "var(--border)") + R"HTML(; border-radius:12px; padding:1.25rem 1rem; cursor:pointer; transition:border-color 0.2s;'>
-          <span style='font-size:2rem;'>&#x1FA99;</span>
-          <span style='font-weight:700; font-size:0.95rem;'>M&uuml;nzpr&uuml;fer</span>
-          <input type='checkbox' name='coinEnabled' )HTML" + String(coinAcceptorEnabled ? "checked" : "") + R"HTML( style='width:1.2rem; height:1.2rem; accent-color:var(--brand); margin:0;'>
-          <span style='font-size:0.78rem; font-weight:600; color:)HTML" + String(coinAcceptorEnabled ? "var(--success)" : "var(--text-sec)") + R"HTML(;'>)HTML" + String(coinAcceptorEnabled ? "&#x2714; Aktiv" : "&#x25CB; Inaktiv") + R"HTML(</span>
-        </label>
-        <label style='display:flex; flex-direction:column; align-items:center; gap:0.5rem; background:var(--card-bg); border:2px solid )HTML" + String(billAcceptorEnabled ? "var(--brand)" : "var(--border)") + R"HTML(; border-radius:12px; padding:1.25rem 1rem; cursor:pointer; transition:border-color 0.2s;'>
-          <span style='font-size:2rem;'>&#x1F4B5;</span>
-          <span style='font-weight:700; font-size:0.95rem;'>Scheinpr&uuml;fer</span>
-          <input type='checkbox' name='billEnabled' )HTML" + String(billAcceptorEnabled ? "checked" : "") + R"HTML( style='width:1.2rem; height:1.2rem; accent-color:var(--brand); margin:0;'>
-          <span style='font-size:0.78rem; font-weight:600; color:)HTML" + String(billAcceptorEnabled ? "var(--success)" : "var(--text-sec)") + R"HTML(;'>)HTML" + String(billAcceptorEnabled ? "&#x2714; Aktiv" : "&#x25CB; Inaktiv") + R"HTML(</span>
-        </label>
-      </div>
-    </div>
-
-    <!-- Münzprüfer -->
-    <div class='stat-box' style='margin-bottom:1rem;'>
-      <h2 style='margin:0 0 0.25rem 0; font-size:1rem; color:var(--text-sec); font-weight:600; letter-spacing:0.04em; text-transform:uppercase;'>&#x1FA99; M&uuml;nzpr&uuml;fer &mdash; M&uuml;nze &rarr; Pulse</h2>
-      <p style='color:var(--text-sec); font-size:0.8rem; margin:0 0 1rem 0;'>Pulse-Anzahl je M&uuml;nze. 0 = nicht aktiv.</p>
-      <div style='display:flex; flex-direction:column; gap:0.6rem;'>
-  )HTML";
-
-  const int coinDenoms[]   = {1, 2, 5, 10, 20, 50, 100, 200};
-  const char* coinLabels[] = {"1 Ct", "2 Ct", "5 Ct", "10 Ct", "20 Ct", "50 Ct", "1 €", "2 €"};
-  const char* coinFields[] = {"coin_1","coin_2","coin_5","coin_10","coin_20","coin_50","coin_100","coin_200"};
-  const char* coinColors[] = {"#b87333","#b87333","#b87333","#c8a951","#c8a951","#c8a951","#c0c0c0","#d4d4d4"};
-  for (int d = 0; d < 8; d++) {
-    int foundPulse = 0;
-    for (int p = 1; p <= 6; p++) {
-      if (pulseValues[p] == coinDenoms[d]) { foundPulse = p; break; }
-    }
-    bool active = foundPulse > 0;
-    String badge = "<span style='background:" + String(coinColors[d]) + "; color:#111; font-weight:800; font-size:0.85rem; border-radius:8px; padding:0.3rem 0.6rem; min-width:3rem; text-align:center; display:inline-block;'>" + String(coinLabels[d]) + "</span>";
-    String statusStr = active ? ("&#10003; " + String(foundPulse) + " Pulse") : "nicht aktiv";
-    String statusColor = active ? "var(--success)" : "var(--text-sec)";
-    html += "<div style='display:flex; align-items:center; gap:1rem; background:var(--card-bg); border:1px solid var(--border); border-radius:10px; padding:0.65rem 1rem;'>";
-    html += badge;
-    html += "<span style='font-size:0.82rem; color:var(--text-sec); flex:0 0 auto;'>M&uuml;nze</span>";
-    html += "<input type='number' name='" + String(coinFields[d]) + "' value='" + String(foundPulse) + "' min='0' max='6' style='width:4.5rem; text-align:center; font-size:1rem; font-weight:700; padding:0.3rem 0.4rem; margin:0;' placeholder='0'>";
-    html += "<span style='margin-left:auto; font-size:0.82rem; font-weight:600; color:" + statusColor + ";'>" + statusStr + "</span>";
-    html += "</div>";
-  }
-
-  html += R"HTML(
-      </div>
-      <p style='color:var(--text-sec); font-size:0.75rem; margin:0.75rem 0 0 0;'>&#9432; Pulse = 0 bedeutet: diese M&uuml;nze wird nicht akzeptiert.</p>
-    </div>
-
-
-    <!-- Scheinprüfer -->
-    <div class='stat-box' style='margin-bottom:1.5rem;'>
-      <h2 style='margin:0 0 0.25rem 0; font-size:1rem; color:var(--text-sec); font-weight:600; letter-spacing:0.04em; text-transform:uppercase;'>&#x1F4B5; Scheinpr&uuml;fer &mdash; Schein &rarr; Pulse</h2>
-      <p style='color:var(--text-sec); font-size:0.8rem; margin:0 0 1rem 0;'>Pulse-Anzahl je Schein. 0 = nicht aktiv.</p>
-      <div style='display:flex; flex-direction:column; gap:0.6rem;'>
-  )HTML";
-
-  const int billDenoms[]   = {5, 10, 20, 50, 100};
-  const char* billFields[] = {"bill_5", "bill_10", "bill_20", "bill_50", "bill_100"};
-  const char* billColors[] = {"#4ade80","#34d399","#60a5fa","#f59e0b","#f87171"};
-  for (int d = 0; d < 5; d++) {
-    int foundPulse = 0;
-    for (int p = 1; p <= 16; p++) {
-      if (billValues[p] == billDenoms[d]) { foundPulse = p; break; }
-    }
-    bool active = foundPulse > 0;
-    String badge = "<span style='background:" + String(billColors[d]) + "; color:#111; font-weight:800; font-size:0.9rem; border-radius:8px; padding:0.3rem 0.7rem; min-width:3.2rem; text-align:center; display:inline-block;'>" + String(billDenoms[d]) + " &euro;</span>";
-    String statusStr = active ? ("&#10003; " + String(foundPulse) + " Pulse") : "nicht aktiv";
-    String statusColor = active ? "var(--success)" : "var(--text-sec)";
-    html += "<div style='display:flex; align-items:center; gap:1rem; background:var(--card-bg); border:1px solid var(--border); border-radius:10px; padding:0.65rem 1rem;'>";
-    html += badge;
-    html += "<span style='font-size:0.82rem; color:var(--text-sec); flex:0 0 auto;'>Schein</span>";
-    html += "<input type='number' name='" + String(billFields[d]) + "' value='" + String(foundPulse) + "' min='0' max='16' style='width:4.5rem; text-align:center; font-size:1rem; font-weight:700; padding:0.3rem 0.4rem; margin:0;' placeholder='0'>";
-    html += "<span style='margin-left:auto; font-size:0.82rem; font-weight:600; color:" + statusColor + ";'>" + statusStr + "</span>";
-    html += "</div>";
-  }
-
-  html += R"HTML(
-      </div>
-      <p style='color:var(--text-sec); font-size:0.75rem; margin:0.75rem 0 0 0;'>&#9432; Pulse = 0 bedeutet: dieser Schein wird nicht akzeptiert.</p>
-    </div>
-
-    <button type='submit' class='btn-main' style='width:100%;'>&#x1F4BE; Einstellungen speichern</button>
-    </form>
-  </section>
-
-
-</div> <!-- End Main -->
-
-</body></html>
-)HTML";
-  server.send(200, "text/html; charset=UTF-8", html);
-}
-#endif // end legacy showDashboard

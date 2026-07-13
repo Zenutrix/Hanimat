@@ -1,7 +1,6 @@
 (function() {
 'use strict';
 
-// ── Config Cache & Populate ──────────────────────────────────────
 var configCache = null;
 
 window.setUploadType = function(radio) {
@@ -36,6 +35,12 @@ function populateTiming(c) {
   setVal('disp_timeout',        c.disp_timeout);
   setVal('web_timeout',         c.web_timeout);
   setVal('status_enabled',      c.status_enabled);
+  setVal('autocredit_enabled',  c.autocredit_enabled);
+  setVal('autocredit_time',     c.autocredit_time);
+  setVal('idle_credit_reset_enabled', c.idle_credit_reset_enabled);
+  setVal('idle_credit_reset_min',     c.idle_credit_reset_min);
+  setVal('max_credit',                c.max_credit);
+  setVal('max_topup',                 c.max_topup);
 }
 
 function populateTelegram(c) {
@@ -48,6 +53,8 @@ function populateTelegram(c) {
   setVal('notify_empty',           c.notify_empty);
   setVal('notify_crash',           c.notify_crash);
   setVal('notify_bruteforce',      c.notify_bruteforce);
+  setVal('notify_credit_threshold', c.notify_credit_threshold);
+  setVal('credit_warn_threshold',   c.credit_warn_threshold);
 }
 
 function populateDisplay(c) {
@@ -86,21 +93,65 @@ function populatePayment(c) {
 
 function populateSlots(c) {
   setVal('maxSlots', c.activeSlots);
-  var priceForm = document.getElementById('priceForm');
-  if (priceForm && c.slotPrices) {
-    var grid = priceForm.querySelector('div');
-    if (grid) {
-      var h = '';
-      c.slotPrices.forEach(function(cents, i) {
-        var price = (cents / 100).toFixed(2);
-        h += '<div style="display:flex;flex-direction:column;gap:4px;">'
-           + '<label style="font-size:0.8rem;color:var(--text-sec);">Fach ' + (i+1) + '</label>'
-           + '<input type="number" step="0.01" min="0" name="price_' + i + '" value="' + price + '" style="text-align:center;">'
-           + '</div>';
-      });
-      grid.innerHTML = h;
+  var grid = document.getElementById('slots-grid-container');
+  if (!grid || !c.slotPrices) return;
+
+  var GROUP_SIZE = 16; // 1 Erweiterungsplatine = 16 Relais
+  var total = c.slotPrices.length;
+  var groupsHtml = '';
+
+  for (var start = 0; start < total; start += GROUP_SIZE) {
+    var end = Math.min(start + GROUP_SIZE, total);
+    var groupNum = (start / GROUP_SIZE) + 1;
+    // Erste Gruppe immer offen; bei wenigen Faechern (<= 2 Platinen) alle offen
+    var isOpen = (start === 0 || total <= GROUP_SIZE * 2) ? ' open' : '';
+
+    var cardsHtml = '';
+    for (var i = start; i < end; i++) {
+      var cents  = c.slotPrices[i];
+      var price  = (cents / 100).toFixed(2);
+      var pickup = !!(c.slotPickup && c.slotPickup[i]);
+      var code   = (c.slotPin && c.slotPin[i]) || '';
+      cardsHtml += ''
+        + '<div class="cfg-slot' + (pickup ? ' is-pickup' : '') + '" data-slot-card="' + i + '">'
+        +   '<div class="cfg-slot-head">'
+        +     '<span class="cfg-slot-num">Fach ' + (i + 1) + '</span>'
+        +     '<label class="cfg-switch" title="Als Abholfach definieren">'
+        +       '<input type="checkbox" name="pickup_' + i + '" data-slot-pickup="' + i + '"' + (pickup ? ' checked' : '') + '>'
+        +       '<span class="cfg-switch-track"></span><span class="cfg-switch-thumb"></span>'
+        +     '</label>'
+        +   '</div>'
+        +   '<div class="cfg-slot-field" data-slot-price-wrap="' + i + '"' + (pickup ? ' style="display:none;"' : '') + '>'
+        +     '<input type="number" step="0.01" min="0" name="price_' + i + '" value="' + price + '" data-slot-price="' + i + '">'
+        +     '<span class="unit">€</span>'
+        +   '</div>'
+        +   '<div class="cfg-slot-field cfg-code" data-slot-code-wrap="' + i + '"' + (pickup ? '' : ' style="display:none;"') + '>'
+        +     '<input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" name="code_' + i + '" value="' + code + '" placeholder="Code" data-slot-code="' + i + '">'
+        +   '</div>'
+        + '</div>';
     }
+
+    groupsHtml += ''
+      + '<details class="cfg-group"' + isOpen + '>'
+      +   '<summary><span class="cfg-group-range">Erweiterung ' + groupNum + ' &middot; Fächer ' + (start + 1) + '–' + end + '</span>'
+      +     '<span class="cfg-group-count">' + (end - start) + ' Fächer</span></summary>'
+      +   '<div class="cfg-group-body">' + cardsHtml + '</div>'
+      + '</details>';
   }
+
+  grid.innerHTML = groupsHtml;
+
+  grid.querySelectorAll('[data-slot-pickup]').forEach(function(cb) {
+    cb.onchange = function() {
+      var idx       = cb.dataset.slotPickup;
+      var card      = grid.querySelector('[data-slot-card="' + idx + '"]');
+      var priceWrap = grid.querySelector('[data-slot-price-wrap="' + idx + '"]');
+      var codeWrap  = grid.querySelector('[data-slot-code-wrap="' + idx + '"]');
+      if (card)      card.classList.toggle('is-pickup', cb.checked);
+      if (priceWrap) priceWrap.style.display = cb.checked ? 'none' : '';
+      if (codeWrap)  codeWrap.style.display  = cb.checked ? '' : 'none';
+    };
+  });
 }
 
 function navTo(id) {
@@ -156,11 +207,21 @@ function applyBulk() {
 }
 
 function loadLogs() {
+  // Nur laden wenn Logs-Seite sichtbar, sonst belastet das 3s-Intervall den ESP32 unnoetig
+  var page = document.getElementById('logs');
+  if (!page || page.style.display === 'none') return;
   var con = document.getElementById('log-output');
-  if (!con) return;
-  fetch('/logdata').then(function(r) { return r.text(); }).then(function(t) {
-    con.textContent = t; con.scrollTop = con.scrollHeight;
-  });
+  if (con) {
+    fetch('/logdata').then(function(r) { return r.text(); }).then(function(t) {
+      con.textContent = t; con.scrollTop = con.scrollHeight;
+    });
+  }
+  var evCon = document.getElementById('event-log-output');
+  if (evCon) {
+    fetch('/eventlogdata').then(function(r) { return r.text(); }).then(function(t) {
+      evCon.textContent = t; evCon.scrollTop = evCon.scrollHeight;
+    });
+  }
 }
 
 function checkUpdate() {
@@ -250,18 +311,26 @@ function loadSalesLog() {
       if (!tbody) return;
       var cashCount = 0, cardCount = 0;
       (data || []).forEach(function(e) {
-        if (e.method === 'SUMUP') cardCount++; else cashCount++;
+        // MIXED (Bar + Karte) zaehlt als Kartenverkauf; nur PICKUP (kostenlos) zaehlt gar nicht
+        if (e.method === 'SUMUP' || e.method === 'MIXED') cardCount++;
+        else if (e.method !== 'PICKUP') cashCount++;
       });
       if (slCash) slCash.textContent = cashCount;
       if (slCard) slCard.textContent = cardCount;
       if (slLabel) slLabel.textContent = data && data.length ? '(' + data.length + ' Einträge)' : '';
       if (!data || !data.length) { tbody.innerHTML=''; if(empty) empty.style.display='block'; return; }
       if (empty) empty.style.display = 'none';
+      var BADGES = {
+        SUMUP:  { label: 'Karte',       bg: 'rgba(0,180,120,0.15)',  color: '#00b478' },
+        PICKUP: { label: 'Abholung',    bg: 'rgba(100,140,255,0.15)', color: '#5c8dff' },
+        MIXED:  { label: 'Bar + Karte', bg: 'rgba(180,100,255,0.15)', color: '#b464ff' },
+        CASH:   { label: 'Bar',         bg: 'rgba(255,159,28,0.15)',  color: 'var(--brand)' }
+      };
       var html = '';
       Array.prototype.slice.call(data).reverse().forEach(function(e, i) {
-        var badge = e.method==='SUMUP'
-          ? '<span style="background:rgba(0,180,120,0.15);color:#00b478;padding:2px 10px;border-radius:12px;font-size:0.75rem;font-weight:700;">Karte</span>'
-          : '<span style="background:rgba(255,159,28,0.15);color:var(--brand);padding:2px 10px;border-radius:12px;font-size:0.75rem;font-weight:700;">Bar</span>';
+        var b = BADGES[e.method] || BADGES.CASH;
+        var badge = '<span style="background:' + b.bg + ';color:' + b.color
+          + ';padding:2px 10px;border-radius:12px;font-size:0.75rem;font-weight:700;">' + b.label + '</span>';
         var bg = i%2===0?'rgba(255,255,255,0.025)':'transparent';
         html += '<tr style="border-bottom:1px solid var(--border);background:'+bg+';">'
           + '<td style="padding:8px 10px;font-size:0.83rem;color:var(--text-sec);">'+e.time+'</td>'
@@ -295,7 +364,6 @@ function loadDashboardData() {
       el = document.getElementById('dyn-ip-net');
       if (el) el.textContent = data.ip || '-';
 
-      // Heap mit Farb-Klasse
       var heapKb = data.heapKb || 0;
       el = document.getElementById('dyn-heap');
       if (el) {
@@ -305,7 +373,6 @@ function loadDashboardData() {
       el = document.getElementById('dyn-heap-min');
       if (el) el.textContent = data.minHeapKb || '-';
 
-      // Absturzzähler & Reset-Grund
       var cc = data.crashCount || 0;
       el = document.getElementById('dyn-crash-count');
       if (el) el.textContent = cc;
@@ -317,11 +384,9 @@ function loadDashboardData() {
       el = document.getElementById('dyn-crash-reset');
       if (el) el.style.display = cc > 0 ? 'block' : 'none';
 
-      // Kassenstand
       el = document.getElementById('dyn-cashbox');
       if (el) el.textContent = data.cashBoxEur || '0.00';
 
-      // Verfügbare Fächer
       if (data.slots) {
         var avail = 0;
         data.slots.forEach(function(s) { if (s.available && !s.locked) avail++; });
@@ -329,18 +394,18 @@ function loadDashboardData() {
         if (el) el.textContent = avail + '/' + (data.activeSlots || data.slots.length);
       }
 
-      // Slot-Karten rendern
       var grid = document.getElementById('slots-grid');
       if (grid && data.slots) {
         var h = '';
         data.slots.forEach(function(s, i) {
           var bc = s.locked ? 'b-lock' : (s.available ? 'b-ok' : 'b-empty');
           var st = s.locked ? 'Gesperrt' : (s.available ? 'Bereit' : 'Leer');
-          var li = s.locked ? '&#128274;' : '&#128275;';
+          var li = s.locked ? '<svg class="ico"><use href="#i19"/></svg>' : '<svg class="ico"><use href="#i34"/></svg>';
+          var priceOrType = s.pickup ? 'Abholfach' : (s.price + ' €');
           h += '<div class="slot-card">'
              + '<div class="slot-header">'
              + '<div><div class="slot-title">Fach #' + (i + 1) + '</div>'
-             + '<div class="slot-price">' + s.price + ' €</div></div>'
+             + '<div class="slot-price">' + priceOrType + '</div></div>'
              + '<span class="badge ' + bc + '">' + st + '</span>'
              + '</div>'
              + '<div class="slot-controls">'
@@ -349,10 +414,10 @@ function loadDashboardData() {
              + '<button type="submit" class="icon-btn" title="Sperren/Entsperren">' + li + '</button></form>'
              + '<form action="/triggerrelay" method="post" style="display:contents;">'
              + '<input type="hidden" name="slot" value="' + i + '">'
-             + '<button type="submit" class="icon-btn btn-test" title="Relais Test">&#9889;</button></form>'
+             + '<button type="submit" class="icon-btn btn-test" title="Relais Test"><svg class="ico"><use href="#i33"/></svg></button></form>'
              + '<form action="/refill" method="post" style="display:contents;">'
              + '<input type="hidden" name="slot" value="' + i + '">'
-             + '<button type="submit" class="icon-btn btn-refill" title="Auffüllen">&#128260;</button></form>'
+             + '<button type="submit" class="icon-btn btn-refill" title="Auffüllen"><svg class="ico"><use href="#i35"/></svg></button></form>'
              + '</div></div>';
         });
         grid.innerHTML = h;
@@ -361,10 +426,13 @@ function loadDashboardData() {
     .catch(function(e) { console.error('loadDashboardData error:', e); });
 }
 
+var ICON_SUN  = '<svg><use href="#i36"/></svg>';
+var ICON_MOON = '<svg><use href="#i37"/></svg>';
+
 function applyTheme(light) {
   document.documentElement.classList.toggle('light', light);
   var btn = document.getElementById('theme-toggle');
-  if (btn) btn.textContent = light ? '🌙 Dunkel' : '☀️ Hell';
+  if (btn) btn.innerHTML = (light ? ICON_MOON : ICON_SUN) + ' ' + (light ? 'Dunkel' : 'Hell');
 }
 
 function toggleTheme() {

@@ -1,13 +1,13 @@
 #pragma once
 // =================================================================
-//  DISPLAY MODULE — LVGL 8.3.x
-//  Replaces Adafruit GFX direct-draw with LVGL widget UI.
-//  320x240 ILI9341 landscape. Included as single translation unit.
+//  DISPLAY MODUL — LVGL 8.3.x
+//  Ersetzt Adafruit-GFX-Direktzeichnen durch LVGL-Widget-UI.
+//  320x240 ILI9341 Querformat. Als einzelne Übersetzungseinheit eingebunden.
 // =================================================================
 #include <lvgl.h>
 
-// ─── HAL: FLUSH CALLBACK & BUFFER ─────────────────────────────────
-// Buffer in internal SRAM (ESP32 DMA cannot address PSRAM)
+// ─── HAL: FLUSH-CALLBACK & PUFFER ─────────────────────────────────
+// Puffer im internen SRAM (ESP32-DMA kann nicht auf PSRAM zugreifen)
 static lv_color_t         lv_buf1[320 * 24];   // ~15 KB
 static lv_disp_draw_buf_t lv_draw_buf;
 static lv_disp_drv_t      lv_disp_drv_s;
@@ -17,110 +17,110 @@ static void lv_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *c
     uint32_t h = (uint32_t)(area->y2 - area->y1 + 1);
     tft.startWrite();
     tft.setAddrWindow(area->x1, area->y1, w, h);
-    // LV_COLOR_16_SWAP=1 → data is already byte-swapped for ILI9341 big-endian SPI
+    // LV_COLOR_16_SWAP=1 → Daten sind bereits byte-vertauscht für ILI9341 Big-Endian-SPI
     tft.writePixels((uint16_t *)color_p, w * h, true, LV_COLOR_16_SWAP);
     tft.endWrite();
     lv_disp_flush_ready(drv);
 }
 
-// ─── FONT ALIASES ─────────────────────────────────────────────────
-#define FBOLD (&lv_font_montserrat_32) // bold — fach/slot number
-#define FXL (&lv_font_montserrat_28)  // x-large — credit amount
-#define FL  (&lv_font_montserrat_24)  // large  — titles, HANIMAT header
-#define FM  (&lv_font_montserrat_16)  // medium — body text, slogan
-#define FS  (&lv_font_montserrat_12)  // small  — labels, footer URL
-#define FXS (&lv_font_montserrat_10)  // x-small — unused (kept for compat)
+// ─── SCHRIFTART-ALIASE ─────────────────────────────────────────────
+#define FBOLD (&lv_font_montserrat_32) // fett — Fach-/Slot-Nummer
+#define FXL (&lv_font_montserrat_28)  // sehr groß — Guthabenbetrag
+#define FL  (&lv_font_montserrat_24)  // groß — Titel, HANIMAT-Header
+#define FM  (&lv_font_montserrat_16)  // mittel — Fließtext, Slogan
+#define FS  (&lv_font_montserrat_12)  // klein — Beschriftungen, Footer-URL
+#define FXS (&lv_font_montserrat_10)  // sehr klein — ungenutzt (für Kompatibilität behalten)
 
-// ─── THEME COLORS ─────────────────────────────────────────────────
+// ─── THEMENFARBEN ─────────────────────────────────────────────────
 static lv_color_t C_BG, C_HEADER, C_TEXT, C_ACCENT,
                   C_SUCCESS, C_ERROR, C_INFO, C_DIVIDER, C_CARD;
 
 static void _applyColors() {
     if (displayWhiteMode) {
         C_BG      = lv_color_hex(0xFFFFFF);
-        C_HEADER  = lv_color_hex(0xFFD600);  // yellow
+        C_HEADER  = lv_color_hex(0xFFD600);  // gelb
         C_TEXT    = lv_color_hex(0x000000);
-        C_ACCENT  = lv_color_hex(0xE65100);  // dark orange
-        C_SUCCESS = lv_color_hex(0x00C853);  // juicy green
-        C_ERROR   = lv_color_hex(0xB71C1C);  // dark red
-        C_INFO    = lv_color_hex(0x0D47A1);  // dark blue
-        C_DIVIDER = lv_color_hex(0x9E9E9E);  // medium grey
-        C_CARD    = lv_color_hex(0xE0E0E0);  // light grey cards
+        C_ACCENT  = lv_color_hex(0xE65100);  // dunkelorange
+        C_SUCCESS = lv_color_hex(0x00C853);  // kräftiges grün
+        C_ERROR   = lv_color_hex(0xB71C1C);  // dunkelrot
+        C_INFO    = lv_color_hex(0x0D47A1);  // dunkelblau
+        C_DIVIDER = lv_color_hex(0x9E9E9E);  // mittelgrau
+        C_CARD    = lv_color_hex(0xE0E0E0);  // hellgraue Karten
     } else {
         C_BG      = lv_color_hex(0x000000);
-        C_HEADER  = lv_color_hex(0xFFE000);  // yellow
+        C_HEADER  = lv_color_hex(0xFFE000);  // gelb
         C_TEXT    = lv_color_hex(0xFFFFFF);
         C_ACCENT  = lv_color_hex(0xFF6400);  // orange
-        C_SUCCESS = lv_color_hex(0x00FF00);  // green
-        C_ERROR   = lv_color_hex(0xFF0000);  // red
+        C_SUCCESS = lv_color_hex(0x00FF00);  // grün
+        C_ERROR   = lv_color_hex(0xFF0000);  // rot
         C_INFO    = lv_color_hex(0x00FFFF);  // cyan
-        C_DIVIDER = lv_color_hex(0x7B7B7B);  // medium grey
-        C_CARD    = lv_color_hex(0x1C1C1C);  // dark grey cards
+        C_DIVIDER = lv_color_hex(0x7B7B7B);  // mittelgrau
+        C_CARD    = lv_color_hex(0x1C1C1C);  // dunkelgraue Karten
     }
 }
 
-// ─── SCREEN POINTERS ──────────────────────────────────────────────
-static lv_obj_t *scr_main;      // IDLE / KEYPAD / SLOT states
-static lv_obj_t *scr_dispense;  // DISPENSING state
-static lv_obj_t *scr_error;     // Error overlay
-static lv_obj_t *scr_ota;       // OTA update progress
-static lv_obj_t *scr_wifi_setup;// WiFiManager portal
-static lv_obj_t *scr_startup;   // Boot splash
-static lv_obj_t *scr_offline;   // Offline/AP mode
-static lv_obj_t *scr_wifi_info; // WiFi connected info
-static lv_obj_t *scr_reset;     // System reset confirm
+// ─── SCREEN-ZEIGER ──────────────────────────────────────────────────
+static lv_obj_t *scr_main;      // IDLE / KEYPAD / SLOT Zustände
+static lv_obj_t *scr_dispense;  // DISPENSING Zustand
+static lv_obj_t *scr_error;     // Fehler-Overlay
+static lv_obj_t *scr_ota;       // OTA-Update-Fortschritt
+static lv_obj_t *scr_wifi_setup;// WiFiManager-Portal
+static lv_obj_t *scr_startup;   // Boot-Splash
+static lv_obj_t *scr_offline;   // Offline-/AP-Modus
+static lv_obj_t *scr_wifi_info; // WLAN-Verbunden-Info
+static lv_obj_t *scr_reset;     // Systemreset-Bestätigung
 
-// ─── WIDGET POINTERS (scr_main) ───────────────────────────────────
-// Header zone (y=0..50)
+// ─── WIDGET-ZEIGER (scr_main) ───────────────────────────────────────
+// Header-Zone (y=0..50)
 static lv_obj_t *m_title;
 static lv_obj_t *m_wifi_dot;
 static lv_obj_t *m_hdiv;
-// Credit zone (y=50..100)
+// Guthaben-Zone (y=50..100)
 static lv_obj_t *m_credit_lbl;   // "GUTHABEN"
 static lv_obj_t *m_credit_val;   // "5.00 EUR"
 static lv_obj_t *m_no_credit;    // "Kein Guthaben"
-static lv_obj_t *m_cdiv;         // divider below credit zone
+static lv_obj_t *m_cdiv;         // Trenner unter Guthaben-Zone
 // Footer (y=215..240)
 static lv_obj_t *m_slogan;
 static lv_obj_t *m_footer_url;
-// Status line (y=188..215, visible in SLOT state)
+// Statuszeile (y=188..215, sichtbar im SLOT-Zustand)
 static lv_obj_t *m_status;
-// Dynamic panels (y=100..188)
+// Dynamische Panels (y=100..188)
 static lv_obj_t *p_idle;
 static lv_obj_t *p_keypad;
 static lv_obj_t *p_slot;
-// idle panel
+// Idle-Panel
 static lv_obj_t *pi_main;
 static lv_obj_t *pi_sub;
-// keypad panel
+// Keypad-Panel
 static lv_obj_t *pk_div;
 static lv_obj_t *pk_card;
 static lv_obj_t *pk_fach;
 static lv_obj_t *pk_input;
 static lv_obj_t *pk_hint;
-// slot panel
+// Slot-Panel
 static lv_obj_t *ps_card;
 static lv_obj_t *ps_fach_lbl;
 static lv_obj_t *ps_num;
 static lv_obj_t *ps_sub_lbl;
 static lv_obj_t *ps_sub_val;
 
-// ─── WIDGET POINTERS (scr_dispense) ───────────────────────────────
+// ─── WIDGET-ZEIGER (scr_dispense) ───────────────────────────────────
 static lv_obj_t *d_hdiv;
 static lv_obj_t *d_slot_info;
 static lv_obj_t *d_msg;
 static lv_obj_t *d_run;
 static lv_obj_t *d_bar;
 
-// ─── WIDGET POINTERS (other screens) ──────────────────────────────
+// ─── WIDGET-ZEIGER (weitere Screens) ──────────────────────────────
 static lv_obj_t *e_hdr, *e_card, *e_l1, *e_l2;
 static lv_obj_t *ota_l1, *ota_l2, *ota_l3, *ota_bar, *ota_pct;
 static lv_obj_t *ws_warn, *ws_ssid, *ws_pw, *ws_ip;
 static lv_obj_t *of_mode, *of_ap, *of_ip;
 static lv_obj_t *wi_conn, *wi_ip, *wi_ver, *wi_by;
-static lv_obj_t *rs_info, *rs_confirm;
+static lv_obj_t *rs_title, *rs_l1, *rs_l2, *rs_l3;
 
-// ─── INTERNAL HELPERS ─────────────────────────────────────────────
+// ─── INTERNE HILFSFUNKTIONEN ─────────────────────────────────────────
 
 static lv_obj_t *_mkScr(lv_color_t bg) {
     lv_obj_t *s = lv_obj_create(NULL);
@@ -196,12 +196,12 @@ static void _hide3(lv_obj_t *a, lv_obj_t *b, lv_obj_t *c) {
     if (c) lv_obj_add_flag(c, LV_OBJ_FLAG_HIDDEN);
 }
 
-// ─── SCREEN INITIALIZERS ──────────────────────────────────────────
+// ─── SCREEN-INITIALISIERUNG ──────────────────────────────────────────
 
 static void _initMainScr() {
     scr_main = _mkScr(C_BG);
 
-    // Header (y=0..50): "HANIMAT" centered, WiFi dot top-right, divider at y=48
+    // Header (y=0..50): "HANIMAT" zentriert, WLAN-Punkt oben rechts, Trenner bei y=48
     m_title    = _clbl(scr_main, "HANIMAT", FL, C_HEADER, 8);
     m_hdiv     = _hline(scr_main, C_DIVIDER, 10, 48, 300);
 
@@ -214,7 +214,7 @@ static void _initMainScr() {
     lv_obj_set_style_pad_all(m_wifi_dot, 0, 0);
     lv_obj_align(m_wifi_dot, LV_ALIGN_TOP_RIGHT, -8, 17);
 
-    // Credit zone (y=50..100)
+    // Guthaben-Zone (y=50..100)
     m_credit_lbl = _lbl(scr_main, "GUTHABEN", FS, C_DIVIDER, 10, 56);
     lv_obj_add_flag(m_credit_lbl, LV_OBJ_FLAG_HIDDEN);
 
@@ -224,7 +224,7 @@ static void _initMainScr() {
     m_no_credit = _clbl(scr_main, "Kein Guthaben", FM, C_DIVIDER, 62);
     m_cdiv      = _hline(scr_main, C_DIVIDER, 10, 96, 300);
 
-    // Status line — visible only when slot selected
+    // Statuszeile — nur sichtbar wenn Fach ausgewählt
     m_status = _clbl(scr_main, "", FM, C_SUCCESS, 176);
     lv_obj_add_flag(m_status, LV_OBJ_FLAG_HIDDEN);
 
@@ -233,14 +233,14 @@ static void _initMainScr() {
     lv_obj_add_flag(m_slogan, LV_OBJ_FLAG_HIDDEN);
     m_footer_url = _clbl(scr_main, "www.hanimat.at", FM, C_HEADER, 222);
 
-    // ── Dynamic panels (y=100..188, one shown at a time) ──────────
+    // ── Dynamische Panels (y=100..188, jeweils nur eines sichtbar) ──
 
-    // IDLE panel
+    // IDLE-Panel
     p_idle = _panel(scr_main);
     pi_main = _clbl(p_idle, "Geld einwerfen",       FM, C_TEXT,    30);
     pi_sub  = _clbl(p_idle, "oder Fach 1-N waehlen", FM, C_DIVIDER, 50);
 
-    // KEYPAD panel
+    // KEYPAD-Panel
     p_keypad = _panel(scr_main);
     lv_obj_set_size(p_keypad, 320, 92);
     pk_div   = _hline(p_keypad, C_DIVIDER, 10, 12, 300);
@@ -249,7 +249,7 @@ static void _initMainScr() {
     pk_input = _lbl(pk_card,  "1_",   FXL, C_HEADER,  14, 18);
     pk_hint  = _clbl(p_keypad, "2. Ziffer oder # bestaetigen", FM, C_DIVIDER, 76);
 
-    // SLOT panel
+    // SLOT-Panel
     p_slot      = _panel(scr_main);
     lv_obj_set_size(p_slot, 320, 72);
     ps_card     = _card(p_slot, 8, 4, 304, 62, C_CARD, C_ACCENT);
@@ -274,7 +274,7 @@ static void _initMainScr() {
 static void _initDispenseScr() {
     scr_dispense = _mkScr(C_BG);
 
-    // Title "VIELEN DANK" in green, centered
+    // Titel "VIELEN DANK" in Grün, zentriert
     _clbl(scr_dispense, "VIELEN DANK", FL, C_SUCCESS, 8);
     _hline(scr_dispense, C_DIVIDER, 10, 48, 300);
 
@@ -282,7 +282,7 @@ static void _initDispenseScr() {
     d_msg       = _clbl(scr_dispense, "Bitte Produkt entnehmen", FM, C_TEXT, 76);
     d_run       = _clbl(scr_dispense, "Ausgabe lauft...", FS, C_DIVIDER, 104);
 
-    // Progress bar (y=120..142)
+    // Fortschrittsbalken (y=120..142)
     d_bar = lv_bar_create(scr_dispense);
     lv_obj_set_pos(d_bar, 10, 120);
     lv_obj_set_size(d_bar, 300, 22);
@@ -304,7 +304,7 @@ static void _initErrorScr() {
     _hline(scr_error, C_DIVIDER, 10, 48, 300);
 
     e_card = _card(scr_error, 10, 58, 300, 110, C_CARD, C_ERROR);
-    // Red top-bar accent strip on card
+    // Roter Akzentstreifen oben auf der Karte
     lv_obj_t *strip = lv_obj_create(e_card);
     lv_obj_set_pos(strip, 0, 0);
     lv_obj_set_size(strip, 300, 6);
@@ -380,17 +380,17 @@ static void _initWifiInfoScr() {
 
 static void _initResetScr() {
     scr_reset = _mkScr(C_BG);
-    _clbl(scr_reset, "SYSTEM RESET", FL, C_ACCENT, 8);
+    rs_title = _clbl(scr_reset, "RESET-MENUE", FL, C_ACCENT, 8);
     _hline(scr_reset, C_DIVIDER, 10, 48, 300);
-    rs_info    = _clbl(scr_reset, "Bestaetigen mit #", FM, C_TEXT, 96);
-    rs_confirm = _clbl(scr_reset, "WERKSRESET...", FL, C_ERROR, 140);
-    lv_obj_add_flag(rs_confirm, LV_OBJ_FLAG_HIDDEN);
+    rs_l1 = _clbl(scr_reset, "", FM, C_TEXT, 78);
+    rs_l2 = _clbl(scr_reset, "", FM, C_TEXT, 108);
+    rs_l3 = _clbl(scr_reset, "", FM, C_DIVIDER, 152);
 }
 
-// ─── APPLY THEME TO ALL SCREENS ───────────────────────────────────
-// Called after _applyColors() to push new colors to every widget.
+// ─── THEME AUF ALLE SCREENS ANWENDEN ───────────────────────────────
+// Wird nach _applyColors() aufgerufen, um neue Farben auf alle Widgets zu übertragen.
 static void _recolorAll() {
-    // Helpers
+    // Hilfsfunktionen
     auto sbc = [](lv_obj_t *o, lv_color_t c){ lv_obj_set_style_bg_color(o, c, 0); };
     auto stc = [](lv_obj_t *o, lv_color_t c){ lv_obj_set_style_text_color(o, c, 0); };
     auto sbc2= [](lv_obj_t *o, lv_color_t c, lv_style_selector_t sel){ lv_obj_set_style_bg_color(o, c, sel); };
@@ -408,11 +408,11 @@ static void _recolorAll() {
     stc(m_slogan,        C_TEXT);
     stc(m_footer_url,    C_HEADER);
 
-    // idle panel
+    // Idle-Panel
     stc(pi_main, C_TEXT);
     stc(pi_sub,  C_DIVIDER);
 
-    // keypad panel
+    // Keypad-Panel
     sbc(pk_div,  C_DIVIDER);
     sbc(pk_card, C_CARD);
     lv_obj_set_style_border_color(pk_card, C_HEADER, 0);
@@ -420,11 +420,11 @@ static void _recolorAll() {
     stc(pk_input, C_HEADER);
     stc(pk_hint,  C_DIVIDER);
 
-    // slot panel
+    // Slot-Panel
     sbc(ps_card, C_CARD);
     lv_obj_set_style_border_color(ps_card, C_ACCENT, 0);
     stc(ps_fach_lbl, C_DIVIDER);
-    // ps_num stays hardcoded #FFE000 (bright yellow) — not theme-dependent
+    // ps_num bleibt fix auf #FFE000 (leuchtgelb) — nicht themenabhängig
     stc(ps_sub_lbl,  C_DIVIDER);
     stc(ps_sub_val,  C_ACCENT);
 
@@ -479,14 +479,16 @@ static void _recolorAll() {
 
     // ── scr_reset ──
     sbc(scr_reset, C_BG);
-    stc(rs_info,    C_TEXT);
-    stc(rs_confirm, C_ERROR);
+    stc(rs_title, C_ACCENT);
+    stc(rs_l1, C_TEXT);
+    stc(rs_l2, C_TEXT);
+    stc(rs_l3, C_DIVIDER);
 
-    // Force redraw of current screen
+    // Erzwingt Neuzeichnen des aktuellen Screens
     lv_obj_invalidate(lv_scr_act());
 }
 
-// ─── PUBLIC: INIT ─────────────────────────────────────────────────
+// ─── ÖFFENTLICH: INITIALISIERUNG ─────────────────────────────────────
 void initLVGL() {
     _applyColors();
 
@@ -510,8 +512,8 @@ void initLVGL() {
     _initResetScr();
 }
 
-// ─── PUBLIC: APPLY THEME ──────────────────────────────────────────
-// Call after changing displayWhiteMode to push colors to all widgets.
+// ─── ÖFFENTLICH: THEME ANWENDEN ──────────────────────────────────────
+// Nach Änderung von displayWhiteMode aufrufen, um Farben auf alle Widgets zu übertragen.
 void applyLVGLTheme() {
     _applyColors();
     _recolorAll();
@@ -519,13 +521,13 @@ void applyLVGLTheme() {
     displayNeedsUpdate = true;
 }
 
-// ─── PUBLIC: STARTUP SCREEN ───────────────────────────────────────
+// ─── ÖFFENTLICH: STARTUP-SCREEN ───────────────────────────────────────
 void displayStartupScreen() {
     lv_scr_load(scr_startup);
     lv_timer_handler();
 }
 
-// ─── PUBLIC: OFFLINE MODE SCREEN ──────────────────────────────────
+// ─── ÖFFENTLICH: OFFLINE-MODUS-SCREEN ──────────────────────────────────
 void displayOfflineModeScreen(const String &ip) {
     char buf[64];
     snprintf(buf, sizeof(buf), "IP: %s", ip.c_str());
@@ -534,7 +536,7 @@ void displayOfflineModeScreen(const String &ip) {
     lv_timer_handler();
 }
 
-// ─── PUBLIC: WIFI CONNECTED INFO SCREEN ───────────────────────────
+// ─── ÖFFENTLICH: WLAN-VERBUNDEN-INFO-SCREEN ───────────────────────────
 void displayWifiConnectedScreen(const String &ip, const String &version) {
     char buf[64];
     snprintf(buf, sizeof(buf), "IP: %s", ip.c_str());
@@ -545,20 +547,51 @@ void displayWifiConnectedScreen(const String &ip, const String &version) {
     lv_timer_handler();
 }
 
-// ─── PUBLIC: SYSTEM RESET SCREEN ──────────────────────────────────
-void displaySystemResetScreen(bool confirmed) {
-    if (confirmed) {
-        lv_obj_clear_flag(rs_confirm, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(rs_info, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_add_flag(rs_confirm, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_clear_flag(rs_info, LV_OBJ_FLAG_HIDDEN);
+// ─── ÖFFENTLICH: RESET-SCREEN ─────────────────────────────────────
+// Modi: 0=Auswahl-Menue, 1=WLAN-Reset bestaetigen, 2=Werksreset bestaetigen,
+//       3=WLAN-Reset laeuft, 4=Werksreset laeuft
+void displayResetScreen(int mode) {
+    switch (mode) {
+        case 0: // Auswahl: Was zuruecksetzen?
+            lv_label_set_text(rs_title, "WAS ZURUECKSETZEN?");
+            lv_label_set_text(rs_l1, "1 = Nur WLAN");
+            lv_label_set_text(rs_l2, "2 = Werksreset (alles)");
+            lv_obj_set_style_text_color(rs_l2, C_TEXT, 0);
+            lv_label_set_text(rs_l3, "* = Abbrechen");
+            break;
+        case 1: // WLAN-Reset bestaetigen
+            lv_label_set_text(rs_title, "WLAN-RESET?");
+            lv_label_set_text(rs_l1, "Alle Einstellungen");
+            lv_label_set_text(rs_l2, "bleiben erhalten.");
+            lv_obj_set_style_text_color(rs_l2, C_TEXT, 0);
+            lv_label_set_text(rs_l3, "# = Bestaetigen   * = Abbrechen");
+            break;
+        case 2: // Werksreset bestaetigen
+            lv_label_set_text(rs_title, "WERKSRESET?");
+            lv_label_set_text(rs_l1, "Alle Einstellungen");
+            lv_label_set_text(rs_l2, "gehen verloren!");
+            lv_obj_set_style_text_color(rs_l2, C_ERROR, 0);
+            lv_label_set_text(rs_l3, "# = Bestaetigen   * = Abbrechen");
+            break;
+        case 3: // WLAN-Reset laeuft
+            lv_label_set_text(rs_title, "WLAN-RESET...");
+            lv_label_set_text(rs_l1, "WLAN-Hotspot startet");
+            lv_label_set_text(rs_l2, "nach dem Neustart.");
+            lv_obj_set_style_text_color(rs_l2, C_TEXT, 0);
+            lv_label_set_text(rs_l3, "");
+            break;
+        case 4: // Werksreset laeuft
+            lv_label_set_text(rs_title, "WERKSRESET...");
+            lv_label_set_text(rs_l1, "");
+            lv_label_set_text(rs_l2, "");
+            lv_label_set_text(rs_l3, "");
+            break;
     }
     lv_scr_load(scr_reset);
     lv_timer_handler();
 }
 
-// ─── PUBLIC: WIIFMANAGER CALLBACK ─────────────────────────────────
+// ─── ÖFFENTLICH: WIFIMANAGER-CALLBACK ─────────────────────────────────
 void configModeCallback(WiFiManager *myWiFiManager) {
     logMessage("Kein WLAN gefunden. Setup-Portal gestartet.");
     lastDrawnMode = DrawnMode::NONE;
@@ -572,7 +605,7 @@ void configModeCallback(WiFiManager *myWiFiManager) {
     ledcWriteTone(0, 0);
 }
 
-// ─── PUBLIC: OTA SCREEN ───────────────────────────────────────────
+// ─── ÖFFENTLICH: OTA-SCREEN ───────────────────────────────────────────
 void displayOTAMessageTFT(String line1, String line2, String line3, uint16_t /*color*/) {
     lastDrawnMode = DrawnMode::NONE;
     lv_label_set_text(ota_l1, line1.c_str());
@@ -596,7 +629,7 @@ void displayOTAProgressTFT(int pct) {
     lv_timer_handler();
 }
 
-// ─── PUBLIC: ERROR SCREEN ─────────────────────────────────────────
+// ─── ÖFFENTLICH: FEHLER-SCREEN ─────────────────────────────────────────
 void displayErrorMessage(const String &line1, const String &line2) {
     logMessage("Display Error: " + line1 + (line2.length() > 0 ? " | " + line2 : ""));
     currentSystemState = CurrentSystemState::ERROR_DISPLAY;
@@ -611,31 +644,31 @@ void displayErrorMessage(const String &line1, const String &line2) {
     errorDisplayUntil  = millis() + 4000;
 }
 
-// ─── PUBLIC: drawPageHeader (no-op — kept for ABI compatibility) ──
+// ─── ÖFFENTLICH: drawPageHeader (No-op — für ABI-Kompatibilität behalten) ──
 void drawPageHeader(String /*title*/, uint16_t /*color*/) {}
 
-// ─── PUBLIC: MAIN UPDATE ──────────────────────────────────────────
-/**
- * Updates scr_main panels and labels based on current system state.
- * Called from loop() when displayNeedsUpdate==true.
- * lv_timer_handler() is called separately from loop().
- */
+// ─── ÖFFENTLICH: HAUPT-UPDATE ──────────────────────────────────────────
+/** @brief Aktualisiert Panels/Labels von scr_main je nach Systemzustand; aufgerufen aus loop() wenn displayNeedsUpdate==true. */
 void updateDisplayScreen() {
     char buf[64];
 
-    // ── DISPENSING: switch to dedicated screen ─────────────────────
+    // ── DISPENSING: Wechsel zu eigenem Screen ─────────────────────────
     if (currentSystemState == CurrentSystemState::DISPENSING) {
         if (lastDrawnMode != DrawnMode::DISPENSING) {
-            // Build slot info text once
-            snprintf(buf, sizeof(buf), "Fach #%d  \xc2\xb7  %s EUR",
-                     dispenseJob.slot + 1,
-                     centsToEurStr(slotPriceCents[dispenseJob.slot]).c_str());
+            // Slot-Info-Text einmalig erstellen
+            if (dispenseJob.method == PaymentMethod::PICKUP) {
+                snprintf(buf, sizeof(buf), "Fach #%d  \xc2\xb7  Abholung", dispenseJob.slot + 1);
+            } else {
+                snprintf(buf, sizeof(buf), "Fach #%d  \xc2\xb7  %s EUR",
+                         dispenseJob.slot + 1,
+                         centsToEurStr(slotPriceCents[dispenseJob.slot]).c_str());
+            }
             lv_label_set_text(d_slot_info, buf);
             lv_bar_set_value(d_bar, 0, LV_ANIM_OFF);
             lv_scr_load(scr_dispense);
             lastDrawnMode = DrawnMode::DISPENSING;
         }
-        // Update progress bar
+        // Fortschrittsbalken aktualisieren
         unsigned long elapsed = millis() - dispenseJob.startTime;
         if (elapsed > (unsigned long)DISPENSE_RELAY_ON_TIME)
             elapsed = (unsigned long)DISPENSE_RELAY_ON_TIME;
@@ -644,10 +677,10 @@ void updateDisplayScreen() {
         return;
     }
 
-    // ── Switch back to scr_main after dispensing ───────────────────
+    // ── Zurück zu scr_main nach Ausgabe ───────────────────────────────
     if (lv_scr_act() != scr_main) {
         lv_scr_load(scr_main);
-        lastDrawnMode = DrawnMode::NONE;  // force full refresh
+        lastDrawnMode = DrawnMode::NONE;  // erzwingt vollständige Aktualisierung
     }
 
     if (currentSystemState == CurrentSystemState::ERROR_DISPLAY) return;
@@ -657,14 +690,14 @@ void updateDisplayScreen() {
         lastDrawnMode = DrawnMode::NORMAL;
     }
 
-    // ── WiFi dot color ─────────────────────────────────────────────
+    // ── WLAN-Punkt-Farbe ─────────────────────────────────────────────
     bool offlineModeActive = (digitalRead(OFFLINE_MODE_PIN) == LOW);
     if (!offlineModeActive) {
         lv_obj_set_style_bg_color(m_wifi_dot,
             (WiFi.status() == WL_CONNECTED) ? C_SUCCESS : C_ERROR, 0);
     }
 
-    // ── Footer update (slogan + URL) ───────────────────────────────
+    // ── Footer-Update (Slogan + URL) ───────────────────────────────────
     if (modeChanged) {
         lv_label_set_text(m_footer_url, displayFooter.c_str());
         if (displaySlogan.length() > 0) {
@@ -678,7 +711,7 @@ void updateDisplayScreen() {
         }
     }
 
-    // ── Credit zone ────────────────────────────────────────────────
+    // ── Guthaben-Zone ────────────────────────────────────────────────
     lv_obj_clear_flag(m_credit_lbl, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(m_credit_val, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(m_no_credit, LV_OBJ_FLAG_HIDDEN);
@@ -691,43 +724,71 @@ void updateDisplayScreen() {
         lv_obj_set_style_text_color(m_credit_val, C_TEXT, 0);
     }
 
-    // ── SLOT SELECTED ──────────────────────────────────────────────
+    // ── FACH AUSGEWÄHLT ──────────────────────────────────────────────
     if (selectedSlot != -1) {
-        bool avail = slotAvailable[selectedSlot];
-        bool lock  = slotLocked[selectedSlot];
+        bool avail  = slotAvailable[selectedSlot];
+        bool lock   = slotLocked[selectedSlot];
+        bool pickup = slotIsPickup[selectedSlot];
+        bool pickupEmpty = isPickupSlotEmpty(selectedSlot);
 
-        // Show slot panel, hide others
+        // Slot-Panel zeigen, andere ausblenden
         lv_obj_add_flag(p_idle,   LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(p_keypad, LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(p_slot,    LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(m_status,  LV_OBJ_FLAG_HIDDEN);
 
-        // Slot number
+        // Slot-Nummer
         snprintf(buf, sizeof(buf), "%d", selectedSlot + 1);
         lv_label_set_text(ps_num, buf);
 
-        // Card border color based on state
+        // Kartenrandfarbe je nach Zustand
         lv_obj_set_style_border_color(ps_card,
-            (!lock && avail) ? C_ACCENT : C_ERROR, 0);
+            (!lock && avail && !pickupEmpty) ? C_ACCENT : C_ERROR, 0);
 
         if (lock) {
+            lv_obj_set_style_text_font(ps_sub_val, FL, 0);
             lv_label_set_text(ps_sub_lbl, "");
             lv_label_set_text(ps_sub_val, "Gesperrt");
             lv_obj_set_style_text_color(ps_sub_val, C_ERROR, 0);
-        } else if (!avail) {
+        } else if (!avail || pickupEmpty) {
+            lv_obj_set_style_text_font(ps_sub_val, FL, 0);
             lv_label_set_text(ps_sub_lbl, "");
             lv_label_set_text(ps_sub_val, "Leer");
             lv_obj_set_style_text_color(ps_sub_val, C_ERROR, 0);
+        } else if (pickup && currentSystemState == CurrentSystemState::PICKUP_PIN_ENTRY) {
+            // PIN-Eingabe aktiv (erst nach '#') -> maskierten Code anzeigen
+            lv_obj_set_style_text_font(ps_sub_val, FL, 0);
+            lv_label_set_text(ps_sub_lbl, "CODE");
+            int total   = strlen(slotPinCode[selectedSlot]);
+            int entered = pinEntryBuffer.length();
+            String mask = "";
+            for (int i = 0; i < total && i < 4; i++) mask += (i < entered) ? "* " : "_ ";
+            lv_label_set_text(ps_sub_val, mask.c_str());
+            lv_obj_set_style_text_color(ps_sub_val, C_ACCENT, 0);
+        } else if (pickup) {
+            // Fach gewählt, aber PIN-Eingabe noch nicht gestartet (kein '#' gedrückt)
+            // Kleinere Schrift, da "ABHOLFACH" bei FL (24pt) die 144px-Box sprengt.
+            lv_obj_set_style_text_font(ps_sub_val, FM, 0);
+            lv_label_set_text(ps_sub_lbl, "");
+            lv_label_set_text(ps_sub_val, "ABHOLFACH");
+            lv_obj_set_style_text_color(ps_sub_val, C_ACCENT, 0);
         } else {
+            lv_obj_set_style_text_font(ps_sub_val, FL, 0);
             lv_label_set_text(ps_sub_lbl, "PREIS");
             snprintf(buf, sizeof(buf), "%s EUR", centsToEurStr(slotPriceCents[selectedSlot]).c_str());
             lv_label_set_text(ps_sub_val, buf);
             lv_obj_set_style_text_color(ps_sub_val, C_ACCENT, 0);
         }
 
-        // Status line (only when slot available and not locked)
-        if (!lock && avail) {
-            if (creditCents >= slotPriceCents[selectedSlot]) {
+        // Statuszeile (nur wenn Fach verfügbar und nicht gesperrt)
+        if (!lock && avail && !pickupEmpty) {
+            if (pickup && currentSystemState == CurrentSystemState::PICKUP_PIN_ENTRY) {
+                lv_label_set_text(m_status, "# bestaetigen  *  abbrechen");
+                lv_obj_set_style_text_color(m_status, C_ACCENT, 0);
+            } else if (pickup) {
+                lv_label_set_text(m_status, "# fuer PIN-Eingabe");
+                lv_obj_set_style_text_color(m_status, C_ACCENT, 0);
+            } else if (creditCents >= slotPriceCents[selectedSlot]) {
                 lv_label_set_text(m_status, "Bereit zum Kauf!");
                 lv_obj_set_style_text_color(m_status, C_SUCCESS, 0);
             } else {
@@ -742,7 +803,7 @@ void updateDisplayScreen() {
         return;
     }
 
-    // ── PARTIAL KEYPAD INPUT ───────────────────────────────────────
+    // ── TEILWEISE KEYPAD-EINGABE ───────────────────────────────────────
     if (keypadInputBuffer.length() > 0) {
         lv_obj_add_flag(p_idle,  LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(p_slot,  LV_OBJ_FLAG_HIDDEN);
